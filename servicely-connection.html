@@ -1,0 +1,39 @@
+<script type="text/javascript">
+    RED.nodes.registerType('servicely-connection', {
+        category: 'config',
+        defaults: {
+            baseUrl: {value: "http://10.0.0.10:8080/", required: true},
+            queue: {value: "", required: true},
+            username: {value: "", required: true},
+            password: {value: "", required: true}
+        },
+        credentials: {
+            password: {type:'password'}
+        },
+        label: function () {
+            return this.baseUrl;
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="servicely-connection">
+    <div class="form-row">
+        <label for="node-config-input-baseUrl"><i class="icon-bookmark"></i> Base URL</label>
+        <input type="text" id="node-config-input-baseUrl" placeholder="https://instance.servicely.ai/">
+    </div>
+
+    <div class="form-row">
+        <label for="node-config-input-queue"><i class="icon-tag"></i> Queue</label>
+        <input type="text" id="node-config-input-queue" placeholder="Queue">
+    </div>
+
+    <div class="form-row">
+        <label for="node-config-input-username"><i class="icon-tag"></i> Username</label>
+        <input type="text" id="node-config-input-username" placeholder="Username">
+    </div>
+
+    <div class="form-row">
+        <label for="node-config-input-password"><i class="icon-tag"></i> Password</label>
+        <input type="password" id="node-config-input-password" placeholder="Password">
+    </div>
+</script>
