@@ -1,12 +1,12 @@
 {
   "name": "node-red-contrib-servicely",
   "version": "0.0.1",
-  "description": "Nodes for connecting to the Servicely AsyncQueue/Actions",
+  "description": "Nodes for connecting to the Servicely Asynchronous Queue/Actions",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\""
   },
   "author": "",
-  "license": "ISC",
+  "license": "Apache 2.0",
   "node-red" : {
     "nodes": {
       "servicely-queue": "servicely-queue.js",
