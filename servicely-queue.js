@@ -2,8 +2,7 @@ module.exports = function (RED) {
 
     "use strict";
 
-    let request = require("request");
-    let cookie = require("cookie");
+    const request = require("request").defaults({jar: true});
 
     function QueueInputNode(config) {
         RED.nodes.createNode(this, config);
