@@ -6,3 +6,10 @@ Queue/Actions.
 ## Development
 
 ls servicely-* | entr -r ./docker_run.sh
+
+# Install
+
+docker exec -it servicely-nodered /bin/bash
+
+cd /data
+npm i --save node-red-contrib-servicely

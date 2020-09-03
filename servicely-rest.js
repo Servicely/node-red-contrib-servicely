@@ -34,8 +34,8 @@ module.exports = function (RED) {
     function performRequest(method, url, node, message, msg) {
         node.status({fill:"blue",shape:"dot",text: ""});
 
-        request({url: url, method: "POST", json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
-            console.log(res.statusCode);
+        request({url: url, method: method, json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
+            // console.log(res.statusCode);
             if (err || res.statusCode >= 400) {
                 let error = (res.statusCode >= 400) ? body._error : err;
                 console.log(error);
