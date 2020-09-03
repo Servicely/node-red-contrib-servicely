@@ -1,0 +1,94 @@
+<script type="text/javascript">
+    /**
+     * Registers a node that connects to a Servicely Instance and claims tasks from a work queue.
+     */
+    RED.nodes.registerType('servicely-rest', {
+        category: 'servicely-rest',
+        color: '#f3e074',
+        defaults: {
+            name: {value: ""},
+            connection: {value: "", type: "servicely-connection", required: true},
+            method: {value: "get", required: true},
+            uri: {value: "/v1/", required: true}
+        },
+        inputs: 1,
+        outputs: 1,
+        paletteLabel: 'REST',
+        icon: "servicely-image-nodered.png",
+        label: function () {
+            return this.name || this.subject || "REST";
+        }
+    });
+
+    /**
+     * Registers a node that connects to a Servicely Instance and claims tasks from a work queue.
+     */
+    RED.nodes.registerType('servicely-transform', {
+        category: 'servicely-rest',
+        color: '#62f518',
+        defaults: {
+            name: {value: ""},
+            connection: {value: "", type: "servicely-connection", required: true},
+            transform_name: {value: "", required: true},
+            import_table: {value: "", required: true}
+        },
+        inputs: 1,
+        outputs: 1,
+        paletteLabel: 'Transform',
+        icon: "servicely-image-nodered.png",
+        label: function () {
+            return this.name || this.subject || "Transform";
+        }
+    });
+</script>
+
+<script type="text/html" data-template-name="servicely-rest">
+    <div class="form-row">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-method"><i class="icon-tag"></i>Method</label>
+        <select name="node-input-method" id="node-input-method">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PATCH">PATCH</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-uri"><i class="icon-tag"></i>URI</label>
+        <input type="text" id="node-input-uri" placeholder="Method">
+    </div>
+
+</script>
+
+<script type="text/html" data-template-name="servicely-transform">
+    <div class="form-row">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-transform_name"><i class="fa fa-globe"></i> Transform</label>
+        <input type="text" id="node-input-transform_name" placeholder="Transform Name:">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Import table</label>
+        <input type="text" id="node-input-import_table" placeholder="Import table:">
+    </div>
+</script>

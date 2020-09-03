@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-servicely",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Nodes for connecting to the Servicely Asynchronous Queue/Actions",
   "scripts": {
     "test": "echo \"Error: no test specified\""
@@ -10,7 +10,8 @@
   "node-red": {
     "nodes": {
       "servicely-queue": "servicely-queue.js",
-      "servicely-connection": "servicely-connection.js"
+      "servicely-connection": "servicely-connection.js",
+      "servicely-rest": "servicely-rest.js"
     }
   }
 }

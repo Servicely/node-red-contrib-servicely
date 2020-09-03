@@ -3,6 +3,7 @@ module.exports = function (RED) {
     "use strict";
 
     const request = require("request").defaults({jar: true});
+    const common = require("./servicely-common.js");
 
     function QueueInputNode(config) {
         RED.nodes.createNode(this, config);
@@ -71,7 +72,7 @@ module.exports = function (RED) {
         let queue = node.connection.queue;
         let subject = config.subject;
 
-        let url = generateUrl(config.connection)
+        let url = generateQueueUrl(config.connection)
 
         let message = {
             "action": "dequeue",
@@ -135,14 +136,9 @@ module.exports = function (RED) {
         });
     }
 
-    function generateUrl(connectionNodeIdentifier) {
+    function generateQueueUrl(connectionNodeIdentifier) {
         let connection = RED.nodes.getNode(connectionNodeIdentifier);
-
-        let baseUrl = connection.baseUrl;
-        let username = connection.username;
-        let password = connection.password;
-
-        return baseUrl.replace("://", "://" + username + ":" + password + "@") + 'controller/AsyncIntegration';
+        return common.generateUrl(connection, 'controller/AsyncIntegration');
     }
 
     function QueueSuccessResponseNode(config) {
@@ -184,7 +180,7 @@ module.exports = function (RED) {
     }
 
     function performReply(msg, node, config) {
-        let url = generateUrl(msg._connectionNode)
+        let url = generateQueueUrl(msg._connectionNode)
 
         let responseObj;
 
