@@ -21,7 +21,7 @@
     });
 
     /**
-     * Registers a node that connects to a Servicely Instance and claims tasks from a work queue.
+     * Registers a node that executes an ImportManager transform.
      */
     RED.nodes.registerType('servicely-transform', {
         category: 'servicely-rest',
@@ -29,8 +29,8 @@
         defaults: {
             name: {value: ""},
             connection: {value: "", type: "servicely-connection", required: true},
-            transform_name: {value: "", required: true},
-            import_table: {value: "", required: true}
+            transform_name: {value: "", required: false},
+            import_table: {value: "", required: false}
         },
         inputs: 1,
         outputs: 1,
@@ -38,6 +38,28 @@
         icon: "servicely-image-nodered.png",
         label: function () {
             return this.name || this.subject || "Transform";
+        }
+    });
+
+    /**
+     * Registers a node that executes an ImportManager import.
+     */
+    RED.nodes.registerType('servicely-import', {
+        category: 'servicely-rest',
+        color: '#62f518',
+        defaults: {
+            name: {value: ""},
+            connection: {value: "", type: "servicely-connection", required: true},
+            import_name: {value: "", required: false},
+            import_table: {value: "", required: false},
+            import_data: { value: "", required: false}
+        },
+        inputs: 1,
+        outputs: 1,
+        paletteLabel: 'Import',
+        icon: "servicely-image-nodered.png",
+        label: function () {
+            return this.name || this.subject || "Import";
         }
     });
 </script>
@@ -73,22 +95,44 @@
 
 <script type="text/html" data-template-name="servicely-transform">
     <div class="form-row">
-        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
-        <input type="text" id="node-input-name" placeholder="Name">
+        <label for="transform-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="transform-name" placeholder="Name">
     </div>
 
     <div class="form-row">
-        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
-        <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+        <label for="transform-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="transform-connection" placeholder="Servicely connection:">
     </div>
 
     <div class="form-row">
-        <label for="node-input-transform_name"><i class="fa fa-globe"></i> Transform</label>
-        <input type="text" id="node-input-transform_name" placeholder="Transform Name:">
+        <label for="transform-transform_name"><i class="fa fa-globe"></i> Transform name</label>
+        <input type="text" id="transform-transform_name" placeholder="From message if left blank">
     </div>
 
     <div class="form-row">
-        <label for="node-input-connection"><i class="fa fa-globe"></i> Import table</label>
-        <input type="text" id="node-input-import_table" placeholder="Import table:">
+        <label for="transform-import_table"><i class="fa fa-globe"></i> Import table</label>
+        <input type="text" id="transform-import_table" placeholder="From message if left blank">
+    </div>
+</script>
+
+<script type="text/html" data-template-name="servicely-import">
+    <div class="form-row">
+        <label for="import-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="import-name" placeholder="Name">
+    </div>
+
+    <div class="form-row">
+        <label for="import-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="import-connection" placeholder="Servicely connection:">
+    </div>
+
+    <div class="form-row">
+        <label for="import-import_name"><i class="fa fa-globe"></i> Import name</label>
+        <input type="text" id="import-import_name" placeholder="From message if left blank">
+    </div>
+
+    <div class="form-row">
+        <label for="import-import_table"><i class="fa fa-globe"></i> Import table</label>
+        <input type="text" id="import-import_table" placeholder="From message if left blank">
     </div>
 </script>

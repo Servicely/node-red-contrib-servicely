@@ -7,9 +7,28 @@ Queue/Actions.
 
 ls servicely-* | entr -r ./docker_run.sh
 
-# Install
+## Development PF
 
-docker exec -it servicely-nodered /bin/bash
+Start the container:
+
+ls servicely-* | entr -r ./docker_run.sh
+
+Gain an interactive shell:
+
+docker exec -it nodered /bin/bash
+
+Go to data directory
 
 cd /data
+
+Add local project as a set of nodes:
+
+npm i --save node-red-contrib-servicely@/plugin
+
+# Install
+
+docker exec -it nodered /bin/bash
+
+cd /data
+
 npm i --save node-red-contrib-servicely

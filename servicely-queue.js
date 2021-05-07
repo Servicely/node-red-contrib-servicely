@@ -87,7 +87,7 @@ module.exports = function (RED) {
             node.status({});
 
             if (err) {
-                console.log(err);
+                console.error(err);
                 msg.payload = err;
                 node.status({fill:"red",shape:"dot",text: "" + err});
                 node.error(RED.util.cloneMessage(msg));
@@ -120,6 +120,10 @@ module.exports = function (RED) {
                 // Replace the payload
                 if (typeof originalPayload.payload == 'string' && originalPayload.payload.charAt(0) == "{" || originalPayload.payload.charAt(0) == "[") {
                     msg.payload = JSON.parse(originalPayload.payload);
+
+                    // Keep the original payload fields so that they can be used in 'Change' nodes to set
+                    // properties for downstream nodes.
+                    msg.original_payload_fields = msg.payload;
                 } else {
                     msg.payload = originalPayload.payload;
                 }
@@ -173,7 +177,7 @@ module.exports = function (RED) {
             if (typeof msg._connectionNode != 'string') {
                 node.status({fill:"red",shape:"dot",text: "Connection node is missing. Did you use the Servicely Queue node?"});
                 node.error(RED.util.cloneMessage(msg));
-                return ;
+                return;
             }
             performReply(msg, node, config);
         });
@@ -202,13 +206,13 @@ module.exports = function (RED) {
 
         request({url: url, method: "POST", json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
             if (err) {
-                console.log(err);
+                console.error(err);
 
                 node.status({fill:"red",shape:"dot",text: err});
 
                 msg.payload = err;
                 node.error(RED.util.cloneMessage(msg));
-                return console.log(err);
+                return;
             }
             node.status({});
         });
