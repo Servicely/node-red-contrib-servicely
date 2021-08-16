@@ -32,3 +32,7 @@ docker exec -it nodered /bin/bash
 cd /data
 
 npm i --save node-red-contrib-servicely
+
+# Publishing
+
+npm publish . 

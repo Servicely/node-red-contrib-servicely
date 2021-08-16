@@ -4,3 +4,5 @@
 
 # Ignore the docker folder
 _docker_config_volume/
+
+node_modules/
