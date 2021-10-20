@@ -1,11 +1,11 @@
 {
   "name": "node-red-contrib-servicely",
-  "version": "0.0.8",
-  "description": "An implementation of a set of Node-RED nodes to facilitate integration with the Servicely Asynchronous\nQueue/Actions, Data Imports/Transforms, and REST API.",
+  "version": "0.0.10",
+  "description": "A set of Node-RED nodes to facilitate integration with Servicely.ai.",
   "scripts": {
     "test": "echo \"Error: no test specified\""
   },
-  "author": "Chris Jones",
+  "author": "Chris Jones <chris.jones@servicely.ai>",
   "license": "Apache 2.0",
   "keywords": [ "node-red", "servicely" ],
   "node-red": {

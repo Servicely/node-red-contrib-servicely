@@ -83,21 +83,32 @@ module.exports = function (RED) {
         };
 
         node.status({fill:"blue",shape:"dot",text:""});
+
         request({url: url, method: "POST", json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
             node.status({});
 
             if (err) {
-                console.error(err);
                 msg.payload = err;
                 node.status({fill:"red",shape:"dot",text: "" + err});
-                node.error(RED.util.cloneMessage(msg));
+
+                node.error("[performDequeueRequest]: POST error:" + JSON.stringify(RED.util.cloneMessage(msg)));
+                return;
+            }
+
+            if (res.statusCode == 401) {
+                msg.payload = "Authentication failure";
+                node.status({fill:"red",shape:"dot",text: "" + msg.payload});
+
+                node.error("[performDequeueRequest] Authentication failure");
                 return;
             }
 
             // Check for invalid state
             if (body == null || body.data == null || body.data.length == null) {
-                msg.payload = "invalid body data";
-                node.error(RED.util.cloneMessage(msg));
+                msg.payload = "Invalid body data: Status: " + res.statusCode;
+                node.status({fill:"red",shape:"dot",text: "" + msg.payload});
+
+                node.error("[performDequeueRequest] Invalid state: " + JSON.stringify(RED.util.cloneMessage(msg)));
                 return;
             }
 
@@ -206,8 +217,9 @@ module.exports = function (RED) {
 
         request({url: url, method: "POST", json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
             if (err) {
-                console.error(err);
+                // console.error(err);
 
+                node.error("Error on reply: performReply");
                 node.status({fill:"red",shape:"dot",text: err});
 
                 msg.payload = err;
