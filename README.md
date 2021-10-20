@@ -1,38 +1,7 @@
 # Servicely connector for Node-RED
+An implementation of a set of Node-RED nodes to facilitate integration with the Servicely Asynchronous
+Queue/Actions, Data Imports/Transforms, and REST API.
 
-A beta implementation of a set of Node-RED nodes to facilitate integration with the Servicely Asynchronous
-Queue/Actions.
- 
-## Development
+## Documentation
+For usage information see: https://servicely-ai.atlassian.net/wiki/spaces/SUD/pages/1430487041/Node-RED+Integration
 
-ls servicely-* | entr -r ./docker_run.sh
-
-## Development PF
-
-Start the container:
-
-ls servicely-* | entr -r ./docker_run.sh
-
-Gain an interactive shell:
-
-docker exec -it nodered /bin/bash
-
-Go to data directory
-
-cd /data
-
-Add local project as a set of nodes:
-
-npm i --save node-red-contrib-servicely@/plugin
-
-# Install
-
-docker exec -it nodered /bin/bash
-
-cd /data
-
-npm i --save node-red-contrib-servicely
-
-# Publishing
-
-npm publish . 
