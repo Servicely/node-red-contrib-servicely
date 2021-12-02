@@ -28,7 +28,6 @@
         color: '#62f518',
         defaults: {
             name: {value: ""},
-            connection: {value: "", type: "servicely-connection", required: true},
             transform_name: {value: "", required: false},
             import_table: {value: "", required: false}
         },
@@ -49,7 +48,6 @@
         color: '#62f518',
         defaults: {
             name: {value: ""},
-            connection: {value: "", type: "servicely-connection", required: true},
             import_name: {value: "", required: false},
             import_table: {value: "", required: false},
             import_data: { value: "", required: false}
@@ -100,11 +98,6 @@
     </div>
 
     <div class="form-row">
-        <label for="transform-connection"><i class="fa fa-globe"></i> Connection</label>
-        <input type="text" id="transform-connection" placeholder="Servicely connection:">
-    </div>
-
-    <div class="form-row">
         <label for="transform-transform_name"><i class="fa fa-globe"></i> Transform name</label>
         <input type="text" id="transform-transform_name" placeholder="From message if left blank">
     </div>
@@ -119,11 +112,6 @@
     <div class="form-row">
         <label for="import-name"><i class="icon-tag"></i> Name</label>
         <input type="text" id="import-name" placeholder="Name">
-    </div>
-
-    <div class="form-row">
-        <label for="import-connection"><i class="fa fa-globe"></i> Connection</label>
-        <input type="text" id="import-connection" placeholder="Servicely connection:">
     </div>
 
     <div class="form-row">
