@@ -1,3 +1,4 @@
+const common = require("./servicely-common.js");
 module.exports = function (RED) {
     "use strict";
 
@@ -55,11 +56,11 @@ module.exports = function (RED) {
 
         let node = this;
 
-        let connection = RED.nodes.getNode(config.connection);
-
-        let url = common.generateUrl(connection, "controller/ImportManager");
-
         node.on('input', function (msg) {
+            let connectionNodeIdentifier = msg._connectionNode;
+            let connection = RED.nodes.getNode(connectionNodeIdentifier);
+            let url = common.generateUrl(connection, "controller/ImportManager");
+
             node.status({});
 
             if (msg.transform_enabled) {
@@ -81,11 +82,12 @@ module.exports = function (RED) {
         RED.nodes.createNode(this, config);
 
         let node = this;
-        let connection = RED.nodes.getNode(config.connection);
-
-        let url = common.generateUrl(connection, "controller/ImportManager");
 
         node.on('input', function (msg) {
+            let connectionNodeIdentifier = msg._connectionNode;
+            let connection = RED.nodes.getNode(connectionNodeIdentifier);
+            let url = common.generateUrl(connection, "controller/ImportManager");
+
             node.status({});
 
             if (msg.import_enabled) {
