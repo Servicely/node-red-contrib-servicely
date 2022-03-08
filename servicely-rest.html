@@ -7,7 +7,7 @@
         color: '#f3e074',
         defaults: {
             name: {value: ""},
-            connection: {value: "", type: "servicely-connection", required: true},
+            connection: {value: "", type: "servicely-connection", required: false},
             method: {value: "get", required: true},
             uri: {value: "/v1/", required: true}
         },
@@ -27,9 +27,9 @@
         category: 'servicely-rest',
         color: '#62f518',
         defaults: {
-            name: {value: ""},
-            transform_name: {value: "", required: false},
-            import_table: {value: "", required: false}
+            name: {value: null},
+            transform_name: {value: null, required: false},
+            import_table: {value: null, required: false}
         },
         inputs: 1,
         outputs: 1,
@@ -47,10 +47,10 @@
         category: 'servicely-rest',
         color: '#62f518',
         defaults: {
-            name: {value: ""},
-            import_name: {value: "", required: false},
-            import_table: {value: "", required: false},
-            import_data: { value: "", required: false}
+            name: { value: null },
+            import_name: {value: null, required: false},
+            import_table: {value: null, required: false},
+            import_data: { value: null, required: false}
         },
         inputs: 1,
         outputs: 1,
@@ -63,10 +63,6 @@
 </script>
 
 <script type="text/html" data-template-name="servicely-rest">
-    <div class="form-row">
-        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
-        <input type="text" id="node-input-name" placeholder="Name">
-    </div>
 
     <div class="form-row">
         <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
@@ -89,38 +85,60 @@
         <input type="text" id="node-input-uri" placeholder="Method">
     </div>
 
+    <hr />
+
+    <div class="form-row">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
 </script>
 
 <script type="text/html" data-template-name="servicely-transform">
     <div class="form-row">
-        <label for="transform-name"><i class="icon-tag"></i> Name</label>
-        <input type="text" id="transform-name" placeholder="Name">
+        <label for="node-input-import_table"><i class="fa fa-table"></i> Import table</label>
+        <input type="text" id="node-input-import_table" placeholder="From message if left blank">
     </div>
 
     <div class="form-row">
-        <label for="transform-transform_name"><i class="fa fa-globe"></i> Transform name</label>
-        <input type="text" id="transform-transform_name" placeholder="From message if left blank">
+        <label for="node-input-transform_name"><i class="fa fa-random"></i> Import transform</label>
+        <input type="text" id="node-input-transform_name" placeholder="From message if left blank">
     </div>
 
+    <hr />
+
     <div class="form-row">
-        <label for="transform-import_table"><i class="fa fa-globe"></i> Import table</label>
-        <input type="text" id="transform-import_table" placeholder="From message if left blank">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
     </div>
 </script>
 
 <script type="text/html" data-template-name="servicely-import">
     <div class="form-row">
-        <label for="import-name"><i class="icon-tag"></i> Name</label>
-        <input type="text" id="import-name" placeholder="Name">
+        <label for="node-input-import_name"><i class="fa fa-file-code-o"></i> Import source</label>
+        <input type="text" id="node-input-import_name" placeholder="From message if left blank">
     </div>
 
     <div class="form-row">
-        <label for="import-import_name"><i class="fa fa-globe"></i> Import name</label>
-        <input type="text" id="import-import_name" placeholder="From message if left blank">
+        <label for="node-input-import_table"><i class="fa fa-table"></i> Import table</label>
+        <input type="text" id="node-input-import_table" placeholder="From message if left blank">
     </div>
 
+    <hr />
+
     <div class="form-row">
-        <label for="import-import_table"><i class="fa fa-globe"></i> Import table</label>
-        <input type="text" id="import-import_table" placeholder="From message if left blank">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
     </div>
+</script>
+
+<script type="text/html" data-help-name="servicely-rest">
+    <p>Provides simple access to the Servicely REST API.</p>
+</script>
+
+<script type="text/html" data-help-name="servicely-import">
+    <p>Supports loading payload data into a Servicely Import Table. Data can then be transformed using the Transform Node.</p>
+</script>
+
+<script type="text/html" data-help-name="servicely-transform">
+    <p>Supports Transforming payloads imported into a Servicely Import Table to the Destination tables.</p>
 </script>

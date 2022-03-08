@@ -14,6 +14,25 @@
             return this.baseUrl;
         }
     });
+
+    /**
+     * Registers a node allows a Servicely connection to be injected for subsequent nodes
+     */
+    RED.nodes.registerType('servicely-connection-injector', {
+        category: 'servicely-rest',
+        color: '#c0deed',
+        defaults: {
+            name: {value: null},
+            connection: { value: null, type: "servicely-connection", required: true }
+        },
+        inputs: 1,
+        outputs: 1,
+        paletteLabel: 'Connector',
+        icon: "servicely-image-nodered.png",
+        label: function () {
+            return this.name || this.subject || "Connector";
+        }
+    });
 </script>
 
 <script type="text/html" data-template-name="servicely-connection">
@@ -36,4 +55,23 @@
         <label for="node-config-input-password"><i class="icon-tag"></i> Password</label>
         <input type="password" id="node-config-input-password" placeholder="Password">
     </div>
+</script>
+
+
+<script type="text/html" data-template-name="servicely-connection-injector">
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+    </div>
+
+    <hr />
+
+    <div class="form-row">
+        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="servicely-connection-injector">
+    <p>A simple node that injects a Servicely Connection definition into the flow. Allows other nodes in the flow that require connection information to inherit from a common source. Not required if using a Queue Node as the source.</p>
 </script>
