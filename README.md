@@ -2,7 +2,7 @@ An implementation of a set of Node-RED nodes to facilitate integration with the 
 Queue/Actions, Data Imports/Transforms, and REST API.
 
 ### Documentation
-For usage information see: https://servicely-ai.atlassian.net/wiki/spaces/SUD/pages/1430487041/Node-RED+Integration
+For usage information see: https://docs-servicely.atlassian.net/wiki/spaces/SD/pages/2247196673/Node-RED
 
 ### About Servicely.ai
 
