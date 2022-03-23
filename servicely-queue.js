@@ -1,5 +1,6 @@
-module.exports = function (RED) {
+const common = require("./servicely-common.js");
 
+module.exports = function (RED) {
     "use strict";
 
     const request = require("request").defaults({jar: true});
@@ -153,7 +154,12 @@ module.exports = function (RED) {
 
     function generateQueueUrl(connectionNodeIdentifier) {
         let connection = RED.nodes.getNode(connectionNodeIdentifier);
-        return common.generateUrl(connection, 'controller/AsyncIntegration');
+        return common.generateStandardURL(connection, 'controller/AsyncIntegration');
+    }
+
+    function generateHeaders(connectionNodeIdentifier) {
+        let connection = RED.nodes.getNode(connectionNodeIdentifier);
+        return common.generateHeaders(connection);
     }
 
     function QueueSuccessResponseNode(config) {
@@ -195,7 +201,8 @@ module.exports = function (RED) {
     }
 
     function performReply(msg, node, config) {
-        let url = generateQueueUrl(msg._connectionNode)
+        let url = generateQueueUrl(msg._connectionNode);
+        let headers = generateHeaders(msg._connectionNode);
 
         let responseObj;
 
@@ -215,7 +222,7 @@ module.exports = function (RED) {
 
         node.status({fill:"blue",shape:"dot",text: ""});
 
-        request({url: url, method: "POST", json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
+        request({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
             if (err) {
                 // console.error(err);
 

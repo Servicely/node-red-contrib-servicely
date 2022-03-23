@@ -23,23 +23,25 @@ module.exports = function (RED) {
 
             let uri = config.uri;
             let url = common.generateUrl(connection, uri);
+            let headers = common.generateHeaders(connection);
+
             let method = config.method;
 
             switch (method) {
                 case "GET":
-                    performRequest(method, url, node, null, msg);
+                    performRequest(method, url, node, null, msg, headers);
                     break;
                 case "POST":
-                    performRequest(method, url, node, msg.payload, msg);
+                    performRequest(method, url, node, msg.payload, msg, headers);
                     break;
             }
         });
     }
 
-    function performRequest(method, url, node, message, msg) {
+    function performRequest(method, url, node, message, msg, headers) {
         node.status({fill:"blue",shape:"dot",text: ""});
 
-        request({url: url, method: method, json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
+        request({url: url, method: method, json: message, headers: headers }, (err, res, body) => {
             if (err) {
                 setErrorMessage(node, msg, err);
 
@@ -47,8 +49,10 @@ module.exports = function (RED) {
                 console.error(body);
                 console.error(res.statusCode);
 
-                if (typeof body == "string") {
+                if (typeof body == "string" && body != "") {
                     body = JSON.parse(body);
+                } else if (typeof body == "string" && body == "") {
+                    body = null;
                 }
 
                 let error;
@@ -64,7 +68,7 @@ module.exports = function (RED) {
                 }
                 setErrorMessage(node, msg, error);
             } else {
-                console.log(JSON.stringify(body));
+                // console.log(JSON.stringify(body));
 
                 msg.payload = (typeof body == "string") ? JSON.parse(body).data : body.data;
                 node.send(RED.util.cloneMessage(msg));
@@ -94,6 +98,7 @@ module.exports = function (RED) {
 
             let connection = RED.nodes.getNode(connectionNodeIdentifier);
             let url = common.generateUrl(connection, "controller/ImportManager");
+            let headers = common.generateHeaders(connection);
 
             node.status({});
 
@@ -116,7 +121,7 @@ module.exports = function (RED) {
                     import_metadata: import_metadata
                 };
 
-                performRequest("POST", url, node, message, msg);
+                performRequest("POST", url, node, message, msg, headers);
             }
         });
     }
@@ -136,6 +141,7 @@ module.exports = function (RED) {
 
             let connection = RED.nodes.getNode(connectionNodeIdentifier);
             let url = common.generateUrl(connection, "controller/ImportManager");
+            let headers = common.generateHeaders(connection);
 
             node.status({});
 
@@ -149,7 +155,7 @@ module.exports = function (RED) {
                     import_table: config.import_table || msg.import_table
                 };
 
-                performRequest("POST", url, node, message, msg);
+                performRequest("POST", url, node, message, msg, headers);
             }
         });
     }

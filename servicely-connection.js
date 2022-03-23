@@ -5,8 +5,22 @@ module.exports = function (RED) {
         this.name = n.name;
         this.baseUrl = n.baseUrl;
         this.queue = n.queue;
+
         this.username = n.username;
         this.password = n.password;
+
+        if (n.authtype == null) {
+            if (this.username != null) {
+                this.authtype = "password";
+            } else {
+                this.authtype = "token_hmac_header";
+            }
+        } else {
+            this.authtype = n.authtype;
+        }
+        this.authtype = n.authtype || "password";
+        this.token = n.token;
+        this.secret = n.secret;
     }
 
     function ServicelyConnectionInjector(config) {

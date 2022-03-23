@@ -4,15 +4,18 @@
         defaults: {
             baseUrl: {value: "https://[instance-name].servicely.ai/", required: true},
             queue: {value: "node-red.default.queue", required: true},
-            username: {value: "integration-account", required: true},
-            password: {value: "", required: true}
+            username: { value: null},
+            password: { value: null},
+            name: {value: null},
+            token: { value: null},
+            secret: { value: null},
+            authtype: { value: null }
         },
-        credentials: {
-            password: {type:'password'}
-        },
+        credentials: {},
         label: function () {
-            return this.baseUrl;
-        }
+            return this.name || this.baseUrl;
+        },
+        oneditprepare: onEditPrepare
     });
 
     /**
@@ -33,9 +36,60 @@
             return this.name || this.subject || "Connector";
         }
     });
+
+    function onEditPrepare() {
+        let self = this;
+
+        if (this.authtype == null && this.username != null) {
+            this.authtype = "password";
+        }
+
+        $("#node-config-input-authtype").typedInput({
+            types: [
+                {
+                    value: "token_hmac_header",
+                    options: [
+                        {value: "password", label: "Username/Password"},
+                        {value: "token_hmac_header", label: "HMAC Header Token"}
+                    ]
+                }
+            ]
+        });
+
+        $("#node-config-input-authtype").on('change', function(event, type, value) {
+            modifyAuthenticationType(value);
+        });
+
+        modifyAuthenticationType($("#node-config-input-authtype").typedInput('value'));
+    }
+
+    function modifyAuthenticationType(value) {
+        let passwordMethod = "hide";
+        let tokenMethod = "hide";
+        let secretMethod = "hide";
+
+        if (value == "password") {
+            passwordMethod = "show"
+        } else if (value == "token_hmac_header") {
+            tokenMethod = "show";
+            secretMethod = "show";
+        }
+
+        $(".node-config-user-password-group")[passwordMethod]();
+        $(".node-config-token-group")[tokenMethod]();
+        $(".node-config-secret-group")[secretMethod]();
+    }
 </script>
 
 <script type="text/html" data-template-name="servicely-connection">
+
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="icon-tag"></i> Name</label>
+        <input id="node-config-input-name" placeholder="Name">
+    </div>
+
+    <hr />
+
     <div class="form-row">
         <label for="node-config-input-baseUrl"><i class="icon-bookmark"></i> Base URL</label>
         <input type="text" id="node-config-input-baseUrl" placeholder="https://instance.servicely.ai/">
@@ -47,13 +101,29 @@
     </div>
 
     <div class="form-row">
+        <label for="node-config-input-authtype"><i class="icon-tag"></i> Authentication type</label>
+        <input type="text" id="node-config-input-authtype" placeholder="Authentication type">
+
+    </div>
+
+    <div class="form-row node-config-user-password-group">
         <label for="node-config-input-username"><i class="icon-tag"></i> Username</label>
         <input type="text" id="node-config-input-username" placeholder="Username">
     </div>
 
-    <div class="form-row">
+    <div class="form-row node-config-user-password-group">
         <label for="node-config-input-password"><i class="icon-tag"></i> Password</label>
         <input type="password" id="node-config-input-password" placeholder="Password">
+    </div>
+
+    <div class="form-row node-config-token-group">
+        <label for="node-config-input-token"><i class="icon-tag"></i> Token</label>
+        <input type="text" id="node-config-input-token" placeholder="Token">
+    </div>
+
+    <div class="form-row node-config-secret-group">
+        <label for="node-config-input-secret"><i class="icon-tag"></i> Token secret</label>
+        <input type="password" id="node-config-input-secret" placeholder="Token secret">
     </div>
 </script>
 
