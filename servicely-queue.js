@@ -74,6 +74,7 @@ module.exports = function (RED) {
         let subject = config.subject;
 
         let url = generateQueueUrl(config.connection)
+        let headers = generateHeaders(config.connection);
 
         let message = {
             "action": "dequeue",
@@ -85,7 +86,7 @@ module.exports = function (RED) {
 
         node.status({fill:"blue",shape:"dot",text:""});
 
-        request({url: url, method: "POST", json: message, headers: {'User-Agent': 'node.js' }}, (err, res, body) => {
+        request({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
             node.status({});
 
             if (err) {
