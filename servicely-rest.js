@@ -1,4 +1,7 @@
 const common = require("./servicely-common.js");
+
+const template = require('lodash/template');
+
 module.exports = function (RED) {
     "use strict";
 
@@ -27,21 +30,37 @@ module.exports = function (RED) {
 
             let method = config.method;
 
+            let inputProperty = config.input_property || "payload";
+            let outputProperty = config.input_property || "payload";
+
+
             switch (method) {
                 case "GET":
-                    performRequest(method, url, node, null, msg, headers);
+                case "DELETE":
+                    performRequest(method, url, node, null, msg, headers, outputProperty);
                     break;
                 case "POST":
-                    performRequest(method, url, node, msg.payload, msg, headers);
+                case "PATCH":
+                case "PUT":
+                    performRequest(method, url, node, msg[inputProperty], msg, headers, outputProperty);
                     break;
             }
         });
     }
 
-    function performRequest(method, url, node, message, msg, headers) {
+    function performRequest(method, url, node, message, msg, headers, outputProperty) {
         node.status({fill:"blue",shape:"dot",text: ""});
 
-        request({url: url, method: method, json: message, headers: headers }, (err, res, body) => {
+        url = template(url)({ msg: msg });
+
+        let requestOptions = {
+            url: url,
+            method: method,
+            json: message,
+            headers: headers
+        };
+
+        request(requestOptions, (err, res, body) => {
             if (err) {
                 setErrorMessage(node, msg, err);
 
@@ -70,7 +89,8 @@ module.exports = function (RED) {
             } else {
                 // console.log(JSON.stringify(body));
 
-                msg.payload = (typeof body == "string") ? JSON.parse(body).data : body.data;
+                msg[outputProperty] = (typeof body == "string") ? JSON.parse(body).data : body.data;
+
                 node.send(RED.util.cloneMessage(msg));
                 node.status({});
             }

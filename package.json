@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-servicely",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "description": "A set of Node-RED nodes to facilitate integration with Servicely.ai.",
   "scripts": {
     "test": "echo \"Error: no test specified\""
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "crypto-js": "^4.1.1",
-    "request": "^2.88.2"
+    "request": "^2.88.2",
+    "lodash": "^4.17.21"
   }
 }

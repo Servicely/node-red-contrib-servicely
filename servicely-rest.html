@@ -9,7 +9,9 @@
             name: {value: ""},
             connection: {value: "", type: "servicely-connection", required: false},
             method: {value: "get", required: true},
-            uri: {value: "/v1/", required: true}
+            uri: {value: "/v1/", required: true},
+            input_property: { value: "payload", required: false },
+            output_property: { value: "payload", required: false }
         },
         inputs: 1,
         outputs: 1,
@@ -82,7 +84,17 @@
 
     <div class="form-row">
         <label for="node-input-uri"><i class="icon-tag"></i>URI</label>
-        <input type="text" id="node-input-uri" placeholder="Method">
+        <input type="text" id="node-input-uri" placeholder="">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-input_property"><i class="icon-tag"></i>Input prop.</label>
+        <input type="text" id="node-input-input_property" placeholder="payload">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-output_property"><i class="icon-tag"></i>Output prop.</label>
+        <input type="text" id="node-input-output_property" placeholder="payload">
     </div>
 
     <hr />
