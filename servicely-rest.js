@@ -31,7 +31,10 @@ module.exports = function (RED) {
             let method = config.method;
 
             let inputProperty = config.input_property || "payload";
-            let outputProperty = config.input_property || "payload";
+            let outputProperty = config.output_property || "payload";
+
+            if (inputProperty.trim() == "") inputProperty = "payload";
+            if (outputProperty.trim() == "") outputProperty = "payload";
 
 
             switch (method) {
