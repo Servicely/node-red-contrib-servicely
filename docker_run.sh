@@ -5,9 +5,9 @@ PLUGINDIR="`pwd`/"
 
 mkdir -p _docker_config_volume
 
-/Applications/Docker.app/Contents/Resources/bin/com.docker.cli rm -f nodered
+/Applications/Docker.app/Contents/Resources/bin/docker rm -f nodered
 
-/Applications/Docker.app/Contents/Resources/bin/com.docker.cli run \
+/Applications/Docker.app/Contents/Resources/bin/docker run \
   -p 1880:1880 \
   -v "${WORKINGDIR}:/data" \
   -v "${PLUGINDIR}:/plugin" \

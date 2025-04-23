@@ -201,6 +201,34 @@ module.exports = function (RED) {
         });
     }
 
+    function QueueStatusResponseNode(config) {
+        RED.nodes.createNode(this, config);
+
+        let node = this;
+
+        node._action = "status";
+        node._status = "ok";
+
+        node.on('input', function (msg) {
+            node.status({});
+            if (typeof msg._connectionNode != 'string') {
+                node.status({fill:"red",shape:"dot",text: "Connection node is missing. Did you use the Servicely Queue node?"});
+                node.error(RED.util.cloneMessage(msg));
+                return;
+            }
+
+            this.log(RED._("servicely-queue.status", config.progressMessage));
+
+            let cloneMessage = RED.util.cloneMessage(msg);
+            cloneMessage.payload = config.progressMessage;
+
+            performReply(cloneMessage, node, config);
+
+            // Keep the message going
+            node.send(msg);
+        });
+    }
+
     function performReply(msg, node, config) {
         let url = generateQueueUrl(msg._connectionNode);
         let headers = generateHeaders(msg._connectionNode);
@@ -241,4 +269,5 @@ module.exports = function (RED) {
     RED.nodes.registerType("servicely-queue", QueueInputNode);
     RED.nodes.registerType("servicely-success", QueueSuccessResponseNode);
     RED.nodes.registerType("servicely-failure", QueueFailureResponseNode);
+    RED.nodes.registerType("servicely-progress", QueueStatusResponseNode);
 };
