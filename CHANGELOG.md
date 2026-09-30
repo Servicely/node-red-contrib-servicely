@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (not yet released)
 
 Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node-RED 5 on Node.js 24.
 
