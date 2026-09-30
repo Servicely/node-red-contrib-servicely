@@ -1,6 +1,6 @@
 <script type="text/javascript">
     /**
-     * Registers a node that connects to a Servicely Instance and claims tasks from a work queue.
+     * Registers a node that calls the Servicely REST API (or an Inbound Webhook).
      */
     RED.nodes.registerType('servicely-rest', {
         category: 'servicely-rest',
@@ -8,17 +8,22 @@
         defaults: {
             name: {value: ""},
             connection: {value: "", type: "servicely-connection", required: false},
-            method: {value: "get", required: true},
+            method: {value: "GET", required: true},
             uri: {value: "/v1/", required: true},
             input_property: { value: "payload", required: false },
-            output_property: { value: "payload", required: false }
+            output_property: { value: "payload", required: false },
+            output_mode: { value: "auto" }
         },
         inputs: 1,
         outputs: 1,
         paletteLabel: 'REST',
         icon: "servicely-image-nodered.png",
         label: function () {
-            return this.name || this.subject || "REST";
+            return this.name || ((this.method || "GET").toUpperCase() + " " + (this.uri || "")).trim() || "REST";
+        },
+        oneditprepare: function () {
+            // Older versions defaulted to a lowercase method that matched none of the options
+            $("#node-input-method").val((this.method || "GET").toUpperCase());
         }
     });
 
@@ -30,15 +35,17 @@
         color: '#62f518',
         defaults: {
             name: {value: null},
+            connection: {value: "", type: "servicely-connection", required: false},
             transform_name: {value: null, required: false},
-            import_table: {value: null, required: false}
+            import_table: {value: null, required: false},
+            output_property: { value: "transform_result", required: false }
         },
         inputs: 1,
         outputs: 1,
         paletteLabel: 'Transform',
         icon: "servicely-image-nodered.png",
         label: function () {
-            return this.name || this.subject || "Transform";
+            return this.name || this.transform_name || "Transform";
         }
     });
 
@@ -50,16 +57,18 @@
         color: '#62f518',
         defaults: {
             name: { value: null },
+            connection: {value: "", type: "servicely-connection", required: false},
             import_name: {value: null, required: false},
             import_table: {value: null, required: false},
-            import_data: { value: null, required: false}
+            input_property: { value: "payload", required: false },
+            output_property: { value: "import_result", required: false }
         },
         inputs: 1,
         outputs: 1,
         paletteLabel: 'Import',
         icon: "servicely-image-nodered.png",
         label: function () {
-            return this.name || this.subject || "Import";
+            return this.name || this.import_table || "Import";
         }
     });
 </script>
@@ -72,8 +81,8 @@
     </div>
 
     <div class="form-row">
-        <label for="node-input-method"><i class="icon-tag"></i>Method</label>
-        <select name="node-input-method" id="node-input-method">
+        <label for="node-input-method"><i class="fa fa-tasks"></i> Method</label>
+        <select id="node-input-method">
             <option value="GET">GET</option>
             <option value="POST">POST</option>
             <option value="PATCH">PATCH</option>
@@ -83,29 +92,43 @@
     </div>
 
     <div class="form-row">
-        <label for="node-input-uri"><i class="icon-tag"></i>URI</label>
-        <input type="text" id="node-input-uri" placeholder="">
+        <label for="node-input-uri"><i class="fa fa-link"></i> URI</label>
+        <input type="text" id="node-input-uri" placeholder="/v1/Incident/${msg.id}">
     </div>
 
     <div class="form-row">
-        <label for="node-input-input_property"><i class="icon-tag"></i>Input prop.</label>
+        <label for="node-input-input_property"><i class="fa fa-sign-in"></i> Input prop.</label>
         <input type="text" id="node-input-input_property" placeholder="payload">
     </div>
 
     <div class="form-row">
-        <label for="node-input-output_property"><i class="icon-tag"></i>Output prop.</label>
+        <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Output prop.</label>
         <input type="text" id="node-input-output_property" placeholder="payload">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-output_mode"><i class="fa fa-filter"></i> Output</label>
+        <select id="node-input-output_mode">
+            <option value="auto">Automatic</option>
+            <option value="data">The response's "data" field</option>
+            <option value="body">The whole response body</option>
+        </select>
     </div>
 
     <hr />
 
     <div class="form-row">
-        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
 </script>
 
 <script type="text/html" data-template-name="servicely-transform">
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="node-input-connection" placeholder="From msg._connectionNode if not set">
+    </div>
+
     <div class="form-row">
         <label for="node-input-import_table"><i class="fa fa-table"></i> Import table</label>
         <input type="text" id="node-input-import_table" placeholder="From message if left blank">
@@ -116,15 +139,25 @@
         <input type="text" id="node-input-transform_name" placeholder="From message if left blank">
     </div>
 
+    <div class="form-row">
+        <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Result prop.</label>
+        <input type="text" id="node-input-output_property" placeholder="transform_result">
+    </div>
+
     <hr />
 
     <div class="form-row">
-        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
 </script>
 
 <script type="text/html" data-template-name="servicely-import">
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="node-input-connection" placeholder="From msg._connectionNode if not set">
+    </div>
+
     <div class="form-row">
         <label for="node-input-import_name"><i class="fa fa-file-code-o"></i> Import source</label>
         <input type="text" id="node-input-import_name" placeholder="From message if left blank">
@@ -135,22 +168,102 @@
         <input type="text" id="node-input-import_table" placeholder="From message if left blank">
     </div>
 
+    <div class="form-row">
+        <label for="node-input-input_property"><i class="fa fa-sign-in"></i> Data prop.</label>
+        <input type="text" id="node-input-input_property" placeholder="payload">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Result prop.</label>
+        <input type="text" id="node-input-output_property" placeholder="import_result">
+    </div>
+
     <hr />
 
     <div class="form-row">
-        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
 </script>
 
 <script type="text/html" data-help-name="servicely-rest">
-    <p>Provides simple access to the Servicely REST API.</p>
+    <p>Calls the Servicely REST API, or an Inbound Webhook.</p>
+
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>The request body for POST, PUT and PATCH, read from the <i>Input prop.</i> property.</dd>
+        <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
+        <dd>The connection to use when none is configured on the node.</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>The response, written to the <i>Output prop.</i> property.</dd>
+        <dt>statusCode <span class="property-type">number</span></dt>
+        <dd>The HTTP status of the response.</dd>
+    </dl>
+
+    <h3>Details</h3>
+    <p>The URI is relative to the connection's base URL, e.g. <code>/v1/Incident</code> or
+        <code>/_webhook/v2/my_webhook</code>. It can include message properties, which are URL-encoded:
+        <code>/v1/Incident/${msg.payload.id}</code>.</p>
+    <p><b>Output</b> controls what is written to the output property:</p>
+    <ul>
+        <li><b>Automatic</b>: the response's <code>data</code> field when it has one (REST API), otherwise the
+            whole body (Inbound Webhooks).</li>
+        <li><b>"data" field</b>: always the <code>data</code> field.</li>
+        <li><b>Whole response body</b>: the body as returned.</li>
+    </ul>
+    <p>Errors, including HTTP error responses, can be handled with a <b>Catch</b> node. The message has
+        <code>msg.error</code>, <code>msg.statusCode</code> and the error text in <code>msg.payload</code>.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-import">
-    <p>Supports loading payload data into a Servicely Import Table. Data can then be transformed using the Transform Node.</p>
+    <p>Loads data into a Servicely Import Table. The data can then be processed with the <b>Transform</b> node.</p>
+
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">array | object</span></dt>
+        <dd>The rows to import, read from the <i>Data prop.</i> property.</dd>
+        <dt class="optional">import_name <span class="property-type">string</span></dt>
+        <dd>The import source, when not configured on the node.</dd>
+        <dt class="optional">import_table <span class="property-type">string</span></dt>
+        <dd>The import table, when not configured on the node.</dd>
+        <dt class="optional">import_metadata <span class="property-type">object</span></dt>
+        <dd>Extra metadata sent with the import, in addition to <code>lastImportTimestamp</code>.</dd>
+        <dt class="optional">import_enabled <span class="property-type">boolean</span></dt>
+        <dd>Set to <code>false</code> to pass the message through without importing.</dd>
+        <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
+        <dd>The connection to use when none is configured on the node.</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>import_result <span class="property-type">object</span></dt>
+        <dd>The import result, written to the <i>Result prop.</i> property. <code>msg.payload</code> is left unchanged.</dd>
+    </dl>
 </script>
 
 <script type="text/html" data-help-name="servicely-transform">
-    <p>Supports Transforming payloads imported into a Servicely Import Table to the Destination tables.</p>
+    <p>Runs a Servicely import transform, moving rows from an Import Table into their destination tables.</p>
+
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt class="optional">transform_name <span class="property-type">string</span></dt>
+        <dd>The transform to run, when not configured on the node.</dd>
+        <dt class="optional">import_table <span class="property-type">string</span></dt>
+        <dd>The import table, when not configured on the node.</dd>
+        <dt class="optional">transform_enabled <span class="property-type">boolean</span></dt>
+        <dd>Set to <code>false</code> to pass the message through without transforming.</dd>
+        <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
+        <dd>The connection to use when none is configured on the node.</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>transform_result <span class="property-type">object</span></dt>
+        <dd>The transform result, written to the <i>Result prop.</i> property. <code>msg.payload</code> is left unchanged.</dd>
+    </dl>
 </script>

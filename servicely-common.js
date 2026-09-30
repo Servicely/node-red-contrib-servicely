@@ -1,8 +1,10 @@
-let Base64 = require('crypto-js/enc-base64');
-let HmacSHA256 = require('crypto-js/hmac-sha256');
-let Utf8 = require('crypto-js/enc-utf8');
+const crypto = require('node:crypto');
 
 const DEFAULT_TIMEOUT_MS = 30000;
+
+const AUTH_PASSWORD = "password";
+const AUTH_HMAC = "token_hmac_header";
+const AUTH_BEARER = "bearer";
 
 /**
  * Parses a response body as JSON where possible, otherwise returns the raw text (e.g. an HTML error page).
@@ -13,7 +15,7 @@ function parseBody(text) {
     }
     try {
         return JSON.parse(text);
-    } catch (e) {
+    } catch {
         return text;
     }
 }
@@ -31,7 +33,30 @@ function describeError(err, timeoutMs) {
     return err;
 }
 
+/**
+ * Resolves a property path such as "msg.payload.id" or "msg.items[0].name" against the given scope.
+ */
+function resolvePath(scope, path) {
+    let parts = path.replace(/\[(\d+|"[^"]*"|'[^']*')\]/g, (m, key) => "." + key.replace(/^["']|["']$/g, "")).split(".");
+    let value = scope;
+    for (let i = 0; i < parts.length; i++) {
+        if (value == null) {
+            return undefined;
+        }
+        value = value[parts[i]];
+    }
+    return value;
+}
+
+// ${msg.a.b}, <%= msg.a.b %> and <%- msg.a.b %> - the interpolation forms previously supported via lodash/template
+const TEMPLATE_PATTERN = /\$\{\s*([^}]*?)\s*\}|<%[=-]\s*([\s\S]*?)\s*%>|<%([\s\S]*?)%>/g;
+const PROPERTY_PATH = /^msg(\.[A-Za-z_$][\w$]*|\[(\d+|"[^"]*"|'[^']*')\])*$/;
+
 module.exports = {
+    AUTH_PASSWORD: AUTH_PASSWORD,
+    AUTH_HMAC: AUTH_HMAC,
+    AUTH_BEARER: AUTH_BEARER,
+
     /**
      * Performs an HTTP request with the global fetch API, calling back with (err, res, body) like the
      * 'request' library did. The body is parsed JSON when the response is JSON, otherwise the raw text.
@@ -80,11 +105,43 @@ module.exports = {
         return "Unknown error:" + JSON.stringify(body);
     },
 
+    /**
+     * Substitutes ${msg.x} (or <%= msg.x %>) placeholders in a URI with URL-encoded message properties.
+     * Only plain property paths are allowed - no code is evaluated.
+     */
+    renderUri: function(uri, msg) {
+        return (uri || "").replace(TEMPLATE_PATTERN, (match, es, interpolate, evaluate) => {
+            let expression = (es !== undefined ? es : interpolate !== undefined ? interpolate : evaluate).trim();
+            if (evaluate !== undefined || !PROPERTY_PATH.test(expression)) {
+                throw new Error("Unsupported URI template expression '" + match + "': only message properties such as ${msg.payload.id} are allowed");
+            }
+            let value = resolvePath({ msg: msg }, expression);
+            return encodeURIComponent(value == null ? "" : (typeof value == "object" ? JSON.stringify(value) : String(value)));
+        });
+    },
+
+    /**
+     * Works out the authentication type for a connection saved without one (flows created by older
+     * versions): HMAC when a token and secret are set, otherwise username/password.
+     */
+    resolveAuthType: function(authtype, credentials) {
+        if (authtype) {
+            return authtype;
+        }
+        if (credentials.token && credentials.secret && !credentials.username) {
+            return AUTH_HMAC;
+        }
+        return AUTH_PASSWORD;
+    },
+
     generateStandardURL: function(connection, path) {
         if (connection == null) {
             throw new Error("connection should not be null");
         }
-        let baseUrl = connection.baseUrl;
+        let baseUrl = connection.baseUrl || "";
+        if (!baseUrl.endsWith("/")) {
+            baseUrl += "/";
+        }
 
         // Fix path
         path = path || "";
@@ -99,32 +156,36 @@ module.exports = {
         if (connection == null) {
             throw new Error("connection should not be null");
         }
-        let authType = connection.authtype || "password";
+        let authType = connection.authtype || AUTH_PASSWORD;
 
-        let token = connection.token;
-        let secret = connection.secret;
+        let token = connection.token || "";
+        let secret = connection.secret || "";
 
         let username = connection.username || "";
         let password = connection.password || "";
 
         let headers = {
-            'User-Agent': 'node.js'
+            'User-Agent': 'node-red-contrib-servicely'
         };
 
         switch (authType) {
-            case "token_hmac_header":
+            case AUTH_HMAC: {
                 // Set the date as the UTC String format
                 let formattedDate = (new Date()).toUTCString();
 
                 // Hash the date with Hmac256 and Base64 the result
-                let hashedDate = Base64.stringify(HmacSHA256(formattedDate, secret));
+                let hashedDate = crypto.createHmac('sha256', secret).update(formattedDate).digest('base64');
 
                 headers["Authorization"] = "HMAC " + token + ":" + hashedDate;
                 headers["Date"] = formattedDate;
 
                 break;
+            }
+            case AUTH_BEARER:
+                headers["Authorization"] = "Bearer " + token;
+                break;
             default:
-                headers["Authorization"] = 'Basic ' + Base64.stringify(Utf8.parse(username + ":" + password));
+                headers["Authorization"] = 'Basic ' + Buffer.from(username + ":" + password, 'utf8').toString('base64');
         }
         return headers;
     }

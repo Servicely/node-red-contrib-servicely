@@ -1,59 +1,83 @@
 const common = require("./servicely-common.js");
 
-const template = require('lodash/template');
-
 module.exports = function (RED) {
     "use strict";
 
-    const common = require("./servicely-common.js");
+    const METHODS_WITH_BODY = ["POST", "PATCH", "PUT"];
+    const METHODS = ["GET", "DELETE"].concat(METHODS_WITH_BODY);
+
+    /**
+     * Returns the connection configured on the node, falling back to the one carried on the message.
+     */
+    function getConnection(config, msg) {
+        return RED.nodes.getNode(config.connection || msg._connectionNode);
+    }
+
+    function propertyName(value, fallback) {
+        return (value && value.trim() !== "") ? value.trim() : fallback;
+    }
 
     function RestRequestNode(config) {
         RED.nodes.createNode(this, config);
 
         let node = this;
 
-        node.on('input', function (msg) {
+        node.on('input', function (msg, send, done) {
             node.status({});
 
-            let connectionNodeID = config.connection || msg._connectionNode;
-            let connection = RED.nodes.getNode(connectionNodeID);
+            let connection = getConnection(config, msg);
 
             if (connection == null) {
-                setErrorMessage(node, msg, "Servicely Connection is not specified");
+                setErrorMessage(node, msg, done, "Servicely Connection is not specified");
                 return;
             }
 
-            let uri = config.uri;
-            let url = common.generateStandardURL(connection, uri);
-            let headers = common.generateHeaders(connection);
-
-            let method = config.method;
-
-            let inputProperty = config.input_property || "payload";
-            let outputProperty = config.output_property || "payload";
-
-            if (inputProperty.trim() == "") inputProperty = "payload";
-            if (outputProperty.trim() == "") outputProperty = "payload";
-
-
-            switch (method) {
-                case "GET":
-                case "DELETE":
-                    performRequest(method, url, node, null, msg, headers, outputProperty);
-                    break;
-                case "POST":
-                case "PATCH":
-                case "PUT":
-                    performRequest(method, url, node, msg[inputProperty], msg, headers, outputProperty);
-                    break;
+            let method = (config.method || "GET").toUpperCase();
+            if (METHODS.indexOf(method) < 0) {
+                setErrorMessage(node, msg, done, "Unsupported method: " + config.method);
+                return;
             }
+
+            let url;
+            try {
+                url = common.generateStandardURL(connection, common.renderUri(config.uri, msg));
+            } catch (e) {
+                setErrorMessage(node, msg, done, e);
+                return;
+            }
+
+            let inputProperty = propertyName(config.input_property, "payload");
+            let outputProperty = propertyName(config.output_property, "payload");
+            let message = METHODS_WITH_BODY.indexOf(method) >= 0 ? RED.util.getMessageProperty(msg, inputProperty) : null;
+
+            performRequest(method, url, node, message, msg, common.generateHeaders(connection), send, done, function (body) {
+                RED.util.setMessageProperty(msg, outputProperty, selectOutput(config.output_mode, body), true);
+            });
         });
     }
 
-    function performRequest(method, url, node, message, msg, headers, outputProperty) {
-        node.status({fill:"blue",shape:"dot",text: ""});
+    /**
+     * Picks what the REST node outputs from a successful response body:
+     *  - "data": the body's "data" field (the REST API wraps results in it)
+     *  - "body": the whole body (e.g. Inbound Webhook v2 responses, which are not wrapped)
+     *  - "auto" (default): "data" when the body has one, otherwise the whole body
+     */
+    function selectOutput(mode, body) {
+        if (body == null || body === "") {
+            return undefined;
+        }
+        switch (mode) {
+            case "data":
+                return body.data;
+            case "body":
+                return body;
+            default:
+                return (typeof body == "object" && Object.prototype.hasOwnProperty.call(body, "data")) ? body.data : body;
+        }
+    }
 
-        url = template(url)({ msg: msg });
+    function performRequest(method, url, node, message, msg, headers, send, done, onSuccess) {
+        node.status({fill:"blue",shape:"dot",text: ""});
 
         let requestOptions = {
             url: url,
@@ -64,17 +88,18 @@ module.exports = function (RED) {
 
         common.sendRequest(requestOptions, (err, res, body) => {
             if (err) {
-                setErrorMessage(node, msg, err);
-
+                setErrorMessage(node, msg, done, err);
             } else if (res.statusCode >= 400) {
-                setErrorMessage(node, msg, common.describeHttpError(res.statusCode, body), res.statusCode);
+                setErrorMessage(node, msg, done, common.describeHttpError(res.statusCode, body), res.statusCode);
             } else if (typeof body == "string" && body !== "") {
-                setErrorMessage(node, msg, "Unexpected non-JSON response (" + res.statusCode + "): " + body.substring(0, 200), res.statusCode);
+                setErrorMessage(node, msg, done, "Unexpected non-JSON response (" + res.statusCode + "): " + body.substring(0, 200), res.statusCode);
             } else {
-                msg[outputProperty] = (body == null || body === "") ? undefined : body.data;
+                msg.statusCode = res.statusCode;
+                onSuccess(body);
 
-                node.send(RED.util.cloneMessage(msg));
+                send(msg);
                 node.status({});
+                done();
             }
         });
     }
@@ -83,7 +108,7 @@ module.exports = function (RED) {
      * Reports an error against the message so that Catch nodes receive it (msg.error), with the
      * HTTP status in msg.statusCode when the error came from a response.
      */
-    function setErrorMessage(node, msg, error, statusCode) {
+    function setErrorMessage(node, msg, done, error, statusCode) {
         if (error instanceof Error) {
             error = error.message;
         }
@@ -94,7 +119,7 @@ module.exports = function (RED) {
         if (statusCode !== undefined) {
             msg.statusCode = statusCode;
         }
-        node.error(error, RED.util.cloneMessage(msg));
+        done(error);
     }
 
     function ImportNode(config) {
@@ -102,41 +127,40 @@ module.exports = function (RED) {
 
         let node = this;
 
-        node.on('input', function (msg) {
-            let connectionNodeIdentifier = msg._connectionNode;
+        node.on('input', function (msg, send, done) {
+            node.status({});
 
-            if (connectionNodeIdentifier == null) {
-                setErrorMessage(node, msg, "Servicely Connection is not specified");
+            let connection = getConnection(config, msg);
+
+            if (connection == null) {
+                setErrorMessage(node, msg, done, "Servicely Connection is not specified");
                 return;
             }
 
-            let connection = RED.nodes.getNode(connectionNodeIdentifier);
+            if (msg.import_enabled === false) {
+                send(msg);
+                done();
+                return;
+            }
+
             let url = common.generateStandardURL(connection, "controller/ImportManager");
             let headers = common.generateHeaders(connection);
 
-            node.status({});
+            let importMetadata = [Object.assign({
+                "lastImportTimestamp": new Date().getTime().toString()
+            }, msg.import_metadata)];
 
-            if (msg.import_enabled === false) {
-                node.send(RED.util.cloneMessage(msg));
-                node.status({});
-            } else {
-                let importMetadata = [{
-                    "lastImportTimestamp": new Date().getTime().toString()
-                }];
+            let message = {
+                action: "import",
+                import_name: config.import_name || msg.import_name,
+                import_table: config.import_table || msg.import_table,
+                import_data: JSON.stringify(RED.util.getMessageProperty(msg, propertyName(config.input_property, "payload"))),
+                import_metadata: JSON.stringify(importMetadata)
+            };
 
-                let import_data = JSON.stringify(msg.payload);
-                let import_metadata = JSON.stringify(importMetadata);
-
-                let message = {
-                    action: "import",
-                    import_name: config.import_name || msg.import_name,
-                    import_table: config.import_table || msg.import_table,
-                    import_data: import_data,
-                    import_metadata: import_metadata
-                };
-
-                performRequest("POST", url, node, message, msg, headers);
-            }
+            performRequest("POST", url, node, message, msg, headers, send, done, function (body) {
+                RED.util.setMessageProperty(msg, propertyName(config.output_property, "import_result"), selectOutput("auto", body), true);
+            });
         });
     }
 
@@ -145,32 +169,34 @@ module.exports = function (RED) {
 
         let node = this;
 
-        node.on('input', function (msg) {
-            let connectionNodeIdentifier = msg._connectionNode;
+        node.on('input', function (msg, send, done) {
+            node.status({});
 
-            if (connectionNodeIdentifier == null) {
-                setErrorMessage(node, msg, "Servicely Connection is not specified");
+            let connection = getConnection(config, msg);
+
+            if (connection == null) {
+                setErrorMessage(node, msg, done, "Servicely Connection is not specified");
                 return;
             }
 
-            let connection = RED.nodes.getNode(connectionNodeIdentifier);
+            if (msg.transform_enabled === false) {
+                send(msg);
+                done();
+                return;
+            }
+
             let url = common.generateStandardURL(connection, "controller/ImportManager");
             let headers = common.generateHeaders(connection);
 
-            node.status({});
+            let message = {
+                action: "transform",
+                transform_name: config.transform_name || msg.transform_name,
+                import_table: config.import_table || msg.import_table
+            };
 
-            if (msg.transform_enabled === false) {
-                node.send(RED.util.cloneMessage(msg));
-                node.status({});
-            } else {
-                let message = {
-                    action: "transform",
-                    transform_name: config.transform_name || msg.transform_name,
-                    import_table: config.import_table || msg.import_table
-                };
-
-                performRequest("POST", url, node, message, msg, headers);
-            }
+            performRequest("POST", url, node, message, msg, headers, send, done, function (body) {
+                RED.util.setMessageProperty(msg, propertyName(config.output_property, "transform_result"), selectOutput("auto", body), true);
+            });
         });
     }
 
