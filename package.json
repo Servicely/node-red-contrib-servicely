@@ -3,10 +3,16 @@
   "version": "0.0.20",
   "description": "A set of Node-RED nodes to facilitate integration with Servicely.ai.",
   "scripts": {
-    "test": "echo \"Error: no test specified\""
+    "test": "mocha \"test/**/*_spec.js\"",
+    "lint": "eslint ."
   },
   "author": "Chris Jones <chris.jones@servicely.ai>",
-  "license": "Apache 2.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Servicely/node-red-contrib-servicely.git"
+  },
+  "homepage": "https://github.com/Servicely/node-red-contrib-servicely#readme",
   "keywords": [
     "node-red",
     "servicely"
@@ -23,10 +29,24 @@
       "servicely-connection": "servicely-connection.js",
       "servicely-rest": "servicely-rest.js"
     },
-    "version": ">=2.0.0"
+    "version": ">=3.0.0"
   },
-  "dependencies": {
-    "crypto-js": "^4.1.1",
-    "lodash": "^4.17.21"
-  }
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "eslint-plugin-html": "^8.2.1",
+    "globals": "^17.12.0",
+    "mocha": "^12.0.2",
+    "node-red": "^5.0.7",
+    "node-red-node-test-helper": "^0.3.6"
+  },
+  "files": [
+    "servicely-*.js",
+    "servicely-*.html",
+    "icons/",
+    "examples/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
 }
