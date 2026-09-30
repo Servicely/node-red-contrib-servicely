@@ -67,26 +67,9 @@ module.exports = function (RED) {
                 setErrorMessage(node, msg, err);
 
             } else if (res.statusCode >= 400) {
-                console.error(body);
-                console.error(res.statusCode);
-
-                let error;
-
-                if (body == null || body === "") {
-                    error = res.statusCode
-                } else if (typeof body == "string") {
-                    // Non-JSON error body, e.g. an HTML error page from a proxy or load balancer
-                    error = res.statusCode + ": " + body.substring(0, 200);
-                } else if (body._error != undefined) {
-                    error = body._error;
-                } else if (body.errors) {
-                    error = JSON.stringify(body.errors)
-                } else {
-                    error = "Unknown error:" + JSON.stringify(body)
-                }
-                setErrorMessage(node, msg, error);
+                setErrorMessage(node, msg, common.describeHttpError(res.statusCode, body), res.statusCode);
             } else if (typeof body == "string" && body !== "") {
-                setErrorMessage(node, msg, "Unexpected non-JSON response (" + res.statusCode + "): " + body.substring(0, 200));
+                setErrorMessage(node, msg, "Unexpected non-JSON response (" + res.statusCode + "): " + body.substring(0, 200), res.statusCode);
             } else {
                 msg[outputProperty] = (body == null || body === "") ? undefined : body.data;
 
@@ -96,13 +79,22 @@ module.exports = function (RED) {
         });
     }
 
-    function setErrorMessage(node, msg, error) {
+    /**
+     * Reports an error against the message so that Catch nodes receive it (msg.error), with the
+     * HTTP status in msg.statusCode when the error came from a response.
+     */
+    function setErrorMessage(node, msg, error, statusCode) {
         if (error instanceof Error) {
             error = error.message;
         }
-        node.status({fill: "red", shape: "dot", text: String(error)});
+        error = String(error);
+
+        node.status({fill: "red", shape: "dot", text: error});
         msg.payload = error;
-        node.error(RED.util.cloneMessage(msg));
+        if (statusCode !== undefined) {
+            msg.statusCode = statusCode;
+        }
+        node.error(error, RED.util.cloneMessage(msg));
     }
 
     function ImportNode(config) {

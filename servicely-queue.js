@@ -89,27 +89,23 @@ module.exports = function (RED) {
             node.status({});
 
             if (err) {
-                msg.payload = err.message;
-                node.status({fill:"red",shape:"dot",text: err.message});
-
-                node.error("[performDequeueRequest]: POST error:" + JSON.stringify(RED.util.cloneMessage(msg)));
+                reportDequeueError(node, msg, err.message);
                 return;
             }
 
             if (res.statusCode == 401) {
-                msg.payload = "Authentication failure";
-                node.status({fill:"red",shape:"dot",text: "" + msg.payload});
+                reportDequeueError(node, msg, "Authentication failure: " + common.describeHttpError(res.statusCode, body), res.statusCode);
+                return;
+            }
 
-                node.error("[performDequeueRequest] Authentication failure");
+            if (res.statusCode >= 400) {
+                reportDequeueError(node, msg, common.describeHttpError(res.statusCode, body), res.statusCode);
                 return;
             }
 
             // Check for invalid state
             if (body == null || body.data == null || body.data.length == null) {
-                msg.payload = "Invalid body data: Status: " + res.statusCode;
-                node.status({fill:"red",shape:"dot",text: "" + msg.payload});
-
-                node.error("[performDequeueRequest] Invalid state: " + JSON.stringify(RED.util.cloneMessage(msg)));
+                reportDequeueError(node, msg, "Invalid body data: Status: " + res.statusCode, res.statusCode);
                 return;
             }
 
@@ -162,6 +158,31 @@ module.exports = function (RED) {
         });
     }
 
+    /**
+     * Reports a failed dequeue. The (empty) polling message is attached so Catch nodes receive the error.
+     */
+    function reportDequeueError(node, msg, error, statusCode) {
+        msg.payload = error;
+        if (statusCode !== undefined) {
+            msg.statusCode = statusCode;
+        }
+        node.status({fill:"red",shape:"dot",text: error});
+        node.error("[performDequeueRequest] " + error, RED.util.cloneMessage(msg));
+    }
+
+    /**
+     * Reports an error against the message being replied to, so Catch nodes receive it.
+     */
+    function reportReplyError(node, msg, error, statusCode) {
+        let errorMsg = RED.util.cloneMessage(msg);
+        errorMsg.payload = error;
+        if (statusCode !== undefined) {
+            errorMsg.statusCode = statusCode;
+        }
+        node.status({fill:"red",shape:"dot",text: error});
+        node.error(error, errorMsg);
+    }
+
     function generateQueueUrl(connectionNodeIdentifier) {
         let connection = RED.nodes.getNode(connectionNodeIdentifier);
         return common.generateStandardURL(connection, 'controller/AsyncIntegration');
@@ -183,8 +204,7 @@ module.exports = function (RED) {
         node.on('input', function (msg) {
             node.status({});
             if (typeof msg._connectionNode != 'string') {
-                node.status({fill:"red",shape:"dot",text: "Connection node is missing. Did you use the Servicely Queue node?"});
-                node.error(RED.util.cloneMessage(msg));
+                reportReplyError(node, msg, "Connection node is missing. Did you use the Servicely Queue node?");
                 return ;
             }
             performReply(msg, node, config);
@@ -202,8 +222,7 @@ module.exports = function (RED) {
         node.on('input', function (msg) {
             node.status({});
             if (typeof msg._connectionNode != 'string') {
-                node.status({fill:"red",shape:"dot",text: "Connection node is missing. Did you use the Servicely Queue node?"});
-                node.error(RED.util.cloneMessage(msg));
+                reportReplyError(node, msg, "Connection node is missing. Did you use the Servicely Queue node?");
                 return;
             }
             performReply(msg, node, config);
@@ -221,8 +240,7 @@ module.exports = function (RED) {
         node.on('input', function (msg) {
             node.status({});
             if (typeof msg._connectionNode != 'string') {
-                node.status({fill:"red",shape:"dot",text: "Connection node is missing. Did you use the Servicely Queue node?"});
-                node.error(RED.util.cloneMessage(msg));
+                reportReplyError(node, msg, "Connection node is missing. Did you use the Servicely Queue node?");
                 return;
             }
 
@@ -262,13 +280,11 @@ module.exports = function (RED) {
 
         common.sendRequest({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
             if (err) {
-                // console.error(err);
-
-                node.error("Error on reply: performReply");
-                node.status({fill:"red",shape:"dot",text: err.message});
-
-                msg.payload = err.message;
-                node.error(RED.util.cloneMessage(msg));
+                reportReplyError(node, msg, "Error on reply: " + err.message);
+                return;
+            }
+            if (res.statusCode >= 400) {
+                reportReplyError(node, msg, "Error on reply: " + common.describeHttpError(res.statusCode, body), res.statusCode);
                 return;
             }
             node.status({});

@@ -60,6 +60,26 @@ module.exports = {
             );
     },
 
+    /**
+     * Builds a readable error message from an HTTP error response (status >= 400).
+     */
+    describeHttpError: function(statusCode, body) {
+        if (body == null || body === "") {
+            return "HTTP " + statusCode;
+        }
+        if (typeof body == "string") {
+            // Non-JSON error body, e.g. an HTML error page from a proxy or load balancer
+            return statusCode + ": " + body.substring(0, 200);
+        }
+        if (body._error != undefined) {
+            return body._error + (body._errorId ? " (errorId: " + body._errorId + ")" : "");
+        }
+        if (body.errors) {
+            return JSON.stringify(body.errors);
+        }
+        return "Unknown error:" + JSON.stringify(body);
+    },
+
     generateStandardURL: function(connection, path) {
         if (connection == null) {
             throw new Error("connection should not be null");
