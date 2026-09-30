@@ -12,10 +12,10 @@
     "servicely"
   ],
   "bugs": {
-    "url" : "https://github.com/Servicely/node-red-contrib-servicely/issues"
+    "url": "https://github.com/Servicely/node-red-contrib-servicely/issues"
   },
   "engines": {
-    "node": ">=12.0.0"
+    "node": ">=18.0.0"
   },
   "node-red": {
     "nodes": {
@@ -27,7 +27,6 @@
   },
   "dependencies": {
     "crypto-js": "^4.1.1",
-    "request": "^2.88.2",
     "lodash": "^4.17.21"
   }
 }

@@ -5,7 +5,6 @@ const template = require('lodash/template');
 module.exports = function (RED) {
     "use strict";
 
-    const request = require("request").defaults({jar: true});
     const common = require("./servicely-common.js");
 
     function RestRequestNode(config) {
@@ -25,7 +24,7 @@ module.exports = function (RED) {
             }
 
             let uri = config.uri;
-            let url = common.generateUrl(connection, uri);
+            let url = common.generateStandardURL(connection, uri);
             let headers = common.generateHeaders(connection);
 
             let method = config.method;
@@ -63,7 +62,7 @@ module.exports = function (RED) {
             headers: headers
         };
 
-        request(requestOptions, (err, res, body) => {
+        common.sendRequest(requestOptions, (err, res, body) => {
             if (err) {
                 setErrorMessage(node, msg, err);
 
@@ -71,16 +70,13 @@ module.exports = function (RED) {
                 console.error(body);
                 console.error(res.statusCode);
 
-                if (typeof body == "string" && body != "") {
-                    body = JSON.parse(body);
-                } else if (typeof body == "string" && body == "") {
-                    body = null;
-                }
-
                 let error;
 
-                if (body == null) {
+                if (body == null || body === "") {
                     error = res.statusCode
+                } else if (typeof body == "string") {
+                    // Non-JSON error body, e.g. an HTML error page from a proxy or load balancer
+                    error = res.statusCode + ": " + body.substring(0, 200);
                 } else if (body._error != undefined) {
                     error = body._error;
                 } else if (body.errors) {
@@ -89,10 +85,10 @@ module.exports = function (RED) {
                     error = "Unknown error:" + JSON.stringify(body)
                 }
                 setErrorMessage(node, msg, error);
+            } else if (typeof body == "string" && body !== "") {
+                setErrorMessage(node, msg, "Unexpected non-JSON response (" + res.statusCode + "): " + body.substring(0, 200));
             } else {
-                // console.log(JSON.stringify(body));
-
-                msg[outputProperty] = (typeof body == "string") ? JSON.parse(body).data : body.data;
+                msg[outputProperty] = (body == null || body === "") ? undefined : body.data;
 
                 node.send(RED.util.cloneMessage(msg));
                 node.status({});
@@ -101,7 +97,10 @@ module.exports = function (RED) {
     }
 
     function setErrorMessage(node, msg, error) {
-        node.status({fill: "red", shape: "dot", text: error});
+        if (error instanceof Error) {
+            error = error.message;
+        }
+        node.status({fill: "red", shape: "dot", text: String(error)});
         msg.payload = error;
         node.error(RED.util.cloneMessage(msg));
     }
@@ -120,7 +119,7 @@ module.exports = function (RED) {
             }
 
             let connection = RED.nodes.getNode(connectionNodeIdentifier);
-            let url = common.generateUrl(connection, "controller/ImportManager");
+            let url = common.generateStandardURL(connection, "controller/ImportManager");
             let headers = common.generateHeaders(connection);
 
             node.status({});
@@ -163,7 +162,7 @@ module.exports = function (RED) {
             }
 
             let connection = RED.nodes.getNode(connectionNodeIdentifier);
-            let url = common.generateUrl(connection, "controller/ImportManager");
+            let url = common.generateStandardURL(connection, "controller/ImportManager");
             let headers = common.generateHeaders(connection);
 
             node.status({});

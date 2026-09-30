@@ -3,7 +3,6 @@ const common = require("./servicely-common.js");
 module.exports = function (RED) {
     "use strict";
 
-    const request = require("request").defaults({jar: true});
     const common = require("./servicely-common.js");
 
     function QueueInputNode(config) {
@@ -86,12 +85,12 @@ module.exports = function (RED) {
 
         node.status({fill:"blue",shape:"dot",text:""});
 
-        request({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
+        common.sendRequest({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
             node.status({});
 
             if (err) {
-                msg.payload = err;
-                node.status({fill:"red",shape:"dot",text: "" + err});
+                msg.payload = err.message;
+                node.status({fill:"red",shape:"dot",text: err.message});
 
                 node.error("[performDequeueRequest]: POST error:" + JSON.stringify(RED.util.cloneMessage(msg)));
                 return;
@@ -130,22 +129,32 @@ module.exports = function (RED) {
                 // Save the original payload, as we only want a single field from the original payload to propagate to the next node
                 msg._original_payload = originalPayload;
 
-                // Replace the payload
-                if (typeof originalPayload.payload == 'string' && originalPayload.payload.charAt(0) == "{" || originalPayload.payload.charAt(0) == "[") {
-                    msg.payload = JSON.parse(originalPayload.payload);
-
-                    // Keep the original payload fields so that they can be used in 'Change' nodes to set
-                    // properties for downstream nodes.
-                    msg.original_payload_fields = msg.payload;
-                } else {
-                    msg.payload = originalPayload.payload;
-                }
-
                 // Set the part index (tracking the position of the original message)
                 msg.parts.index = i;
 
                 // Save the response ID (to reply back to Servicely)
                 msg._reply_to = data[i].id;
+
+                // Replace the payload
+                let payload = originalPayload.payload;
+                delete msg.original_payload_fields;
+
+                if (typeof payload == 'string' && (payload.charAt(0) == "{" || payload.charAt(0) == "[")) {
+                    try {
+                        msg.payload = JSON.parse(payload);
+                    } catch (e) {
+                        // Report against the message (with its _reply_to) so a Catch node can reply with a failure
+                        msg.payload = payload;
+                        node.error("[performDequeueRequest] Invalid JSON payload: " + e.message, RED.util.cloneMessage(msg));
+                        continue;
+                    }
+
+                    // Keep the original payload fields so that they can be used in 'Change' nodes to set
+                    // properties for downstream nodes.
+                    msg.original_payload_fields = msg.payload;
+                } else {
+                    msg.payload = payload;
+                }
 
                 // Send the message
                 node.send(RED.util.cloneMessage(msg));
@@ -251,14 +260,14 @@ module.exports = function (RED) {
 
         node.status({fill:"blue",shape:"dot",text: ""});
 
-        request({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
+        common.sendRequest({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
             if (err) {
                 // console.error(err);
 
                 node.error("Error on reply: performReply");
-                node.status({fill:"red",shape:"dot",text: err});
+                node.status({fill:"red",shape:"dot",text: err.message});
 
-                msg.payload = err;
+                msg.payload = err.message;
                 node.error(RED.util.cloneMessage(msg));
                 return;
             }
