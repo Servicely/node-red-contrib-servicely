@@ -1,0 +1,69 @@
+[
+  {
+    "id": "ex-w",
+    "type": "tab",
+    "label": "Inbound webhook",
+    "info": "Posts a payload to an Inbound Webhook (V2). With Output set to Automatic the whole webhook response is returned."
+  },
+  {
+    "id": "i2",
+    "type": "inject",
+    "z": "ex-w",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      [
+        "r2"
+      ]
+    ],
+    "name": "Send",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"external_key\":\"laptop-001\",\"name\":\"LAPTOP-01\"}",
+    "payloadType": "json"
+  },
+  {
+    "id": "r2",
+    "type": "servicely-rest",
+    "z": "ex-w",
+    "x": 380,
+    "y": 100,
+    "wires": [
+      [
+        "d3"
+      ]
+    ],
+    "name": "",
+    "connection": "ex-conn",
+    "method": "POST",
+    "uri": "/_webhook/v2/my_webhook",
+    "input_property": "payload",
+    "output_property": "payload",
+    "output_mode": "auto"
+  },
+  {
+    "id": "d3",
+    "type": "debug",
+    "z": "ex-w",
+    "x": 600,
+    "y": 100,
+    "wires": [],
+    "name": "",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true"
+  },
+  {
+    "id": "ex-conn",
+    "type": "servicely-connection",
+    "name": "My instance",
+    "baseUrl": "https://instance.servicely.ai/",
+    "queue": "node-red.default.queue",
+    "authtype": "token_hmac_header"
+  }
+]

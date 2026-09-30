@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
+# Runs Node-RED in Docker with this repository mounted at /plugin.
+#   NR_VERSION=4.1.2 ./docker_run.sh     # choose the Node-RED image version (default below)
+#   NR_PORT=1881 ./docker_run.sh         # choose the host port
 
-WORKINGDIR="`pwd`/_docker_config_volume"
-PLUGINDIR="`pwd`/"
+set -e
+
+NR_VERSION="${NR_VERSION:-5.0.7}"
+NR_PORT="${NR_PORT:-1880}"
+
+WORKINGDIR="$(pwd)/_docker_config_volume"
+PLUGINDIR="$(pwd)/"
 
 mkdir -p _docker_config_volume
 
-/Applications/Docker.app/Contents/Resources/bin/docker rm -f nodered
+docker rm -f nodered >/dev/null 2>&1 || true
 
-/Applications/Docker.app/Contents/Resources/bin/docker run \
-  -p 1880:1880 \
+docker run \
+  -p "${NR_PORT}:1880" \
   -v "${WORKINGDIR}:/data" \
   -v "${PLUGINDIR}:/plugin" \
+  --add-host=host.docker.internal:host-gateway \
   --name nodered \
-  nodered/node-red
+  "nodered/node-red:${NR_VERSION}"

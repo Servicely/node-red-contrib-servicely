@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Node-RED plugin (`node-red-contrib-servicely`, published to npm and the Node-RED palette) giving nodes for integrating with Servicely.ai: the asynchronous queue/actions API, data imports/transforms, and the REST API. It is plain CommonJS JavaScript with no build step, linter, or tests (`npm test` is a no-op). User docs: https://docs-servicely.atlassian.net/wiki/spaces/SD/pages/2247196673/Node-RED
+A Node-RED plugin (`node-red-contrib-servicely`, published to npm and the Node-RED palette) giving nodes for integrating with Servicely.ai: the asynchronous queue/actions API, data imports/transforms, the REST API and Inbound Webhooks. Plain CommonJS JavaScript with no build step and **no runtime dependencies** (HTTP uses the built-in `fetch`, hashing uses `node:crypto`). Requires Node >= 18 and Node-RED >= 3. User docs: https://docs-servicely.atlassian.net/wiki/spaces/SD/pages/2247196673/Node-RED
 
 ## Public repository
 
 This repository is **public** (it is mirrored to GitHub and published to npm). Everything committed here must be safe to publish. That applies to code, docs, commit messages and branch names. Never include:
 - internal ticket or issue-tracker IDs or links;
 - customer or partner names;
-- internal wiki or Confluence links, other than the public user docs linked below;
+- internal wiki or Confluence links, other than the public user docs linked above;
 - hostnames, credentials or tokens, including ephemeral test ones;
 - names or emails of individuals.
 
@@ -19,39 +19,33 @@ Describe changes by what they do, e.g. "Replace request with fetch", not by tick
 
 ## Development
 
-Local testing runs inside the `nodered/node-red` Docker image. `docker_run.sh` starts a container called `nodered` on port 1880. It mounts `./_docker_config_volume` as `/data` (the Node-RED user dir, which is gitignored) and the repo as `/plugin`.
-
 ```sh
-ls servicely-* | entr -r ./docker_run.sh      # restart the container whenever a node file changes
-
-# first time only: install the local plugin into the container's Node-RED
-docker exec -it nodered /bin/bash
-cd /data && npm i --save node-red-contrib-servicely@/plugin
+npm test                                   # mocha specs in test/ (node-red-node-test-helper, real Node-RED runtime)
+npx mocha test/rest_spec.js -g "webhook"   # a single spec file / tests matching a name
+npm run lint                               # ESLint (flat config), including inline <script> in *.html
 ```
 
-`docker_run.sh` hardcodes the macOS Docker Desktop binary path (`/Applications/Docker.app/...`).
+Specs run the nodes against a local mock server (`test/helpers/mock-server.js`); they never need a Servicely instance. CI (`.github/workflows/test.yml`) runs lint + tests on Node 20-24 against Node-RED 4 and 5.
 
-Release: bump `version` in `package.json`, then run `npm publish .`.
+For manual testing, `docker_run.sh` starts `nodered/node-red` (version via `NR_VERSION`, default pinned) with the repo mounted at `/plugin`; install it once with `docker exec -it nodered bash -c "cd /data && npm i --save node-red-contrib-servicely@/plugin"`. See README_DEVELOPER.md. Release: bump `version`, update CHANGELOG.md, `npm pack --dry-run` (the `files` whitelist controls what is published), then `npm publish .`.
 
 ## Architecture
 
 Each `servicely-*.js` runtime file is paired with a `servicely-*.html` editor file (node definitions, edit forms, help text). The `node-red.nodes` map in `package.json` registers the three runtime modules, and each module registers several node types:
 
-- **servicely-connection.js**: `servicely-connection` is a config node holding `baseUrl`, `queue`, `authtype`, username/password, and token/secret. `servicely-connection-injector` sets `msg._connectionNode` so that downstream nodes know which connection to use.
-- **servicely-queue.js** (palette category `servicely`): `servicely-queue` polls `controller/AsyncIntegration` with `action: "dequeue"` on a `setInterval`. Each poll starts after a random 0–2s delay, and the node's `close()` clears the interval on redeploy. It splits each returned batch into separate messages using `msg.parts`. `servicely-success`, `servicely-failure`, and `servicely-progress` post a reply to the same endpoint, correlated by `msg._reply_to`. `servicely-progress` also passes the message through. A message whose `msg.rc.code` is non-zero replies with `msg.rc.message` instead of the payload.
-- **servicely-rest.js** (palette category `servicely-rest`): `servicely-rest` makes a GET/POST/PUT/PATCH/DELETE request to `baseUrl + uri`. The URL is a lodash template rendered with `{ msg }`, and the node returns `body.data` in the configured output property. `servicely-import` and `servicely-transform` POST to `controller/ImportManager`. They can be skipped by setting `msg.import_enabled === false` or `msg.transform_enabled === false`.
-- **servicely-common.js**: builds URLs and auth headers. `generateHeaders` sends either `Authorization: HMAC <token>:<base64(HmacSHA256(date, secret))>` with a matching `Date` header (`token_hmac_header`), or HTTP Basic auth (the default).
+- **servicely-connection.js**: `servicely-connection` config node (`baseUrl`, `queue`, `authtype`: `password` | `token_hmac_header` | `bearer`). Secrets are Node-RED **credentials** named `user`, `pass`, `apiToken`, `apiSecret`, and the runtime exposes them as `username`/`password`/`token`/`secret`. `servicely-connection-injector` sets `msg._connectionNode`.
+- **servicely-queue.js** (palette `servicely`): `servicely-queue` dequeues from `controller/AsyncIntegration`. A poll is scheduled with `setTimeout` only after the previous one completes (`_inFlight` guard), with an immediate re-poll after a full batch. Each action becomes a message carrying `msg.parts` (`id`/`type: "array"`/`index`/`count`, so it is Join-compatible). `servicely-success` / `-failure` / `-progress` share `replyHandler` and post replies correlated by `msg._reply_to`. Progress passes the message on and sends `msg.progress` or the configured message; a non-zero `msg.rc.code` replies with `msg.rc.message`.
+- **servicely-rest.js** (palette `servicely-rest`): `servicely-rest` calls `baseUrl + renderUri(uri, msg)`. `output_mode` `auto` returns `body.data` when present, otherwise the whole body (Inbound Webhook v2 responses aren't wrapped in `data`). `servicely-import` / `servicely-transform` POST to `controller/ImportManager` and write results to `msg.import_result` / `msg.transform_result`, leaving `msg.payload` untouched. They are skipped when `msg.import_enabled` / `msg.transform_enabled` is `false`.
+- **servicely-common.js**:
+  - `sendRequest`: a `fetch` wrapper with an `(err, res, body)` callback. It has a 30s timeout and no cookie jar. The body is parsed JSON or the raw text, and parsing never throws.
+  - `describeHttpError`: turns an error response into text, including `_error` / `_errorId`.
+  - `generateHeaders`: Basic, HMAC (`Authorization: HMAC <token>:<base64 HMAC-SHA256 of the Date header>` plus `Date`) or Bearer.
+  - `resolveAuthType`: infers the auth type for legacy connections saved without one.
+  - `renderUri`: `${msg.x}` / `<%= msg.x %>` substitution. Values are URL-encoded, and only plain property paths are allowed.
 
-### How messages carry state between nodes
+### Conventions that span files
 
-Nodes share context through underscore-prefixed `msg` fields, so these must survive intermediate nodes in a flow:
-- `msg._connectionNode` is the ID of the connection config node. The queue node sets it; so does the injector. Reply, import, and transform nodes require it. The REST node uses its own configured connection first and falls back to this field.
-- `msg._reply_to` is the queue item ID used for success/failure/progress replies.
-- `msg._original_payload` is the raw dequeued item. When the item's payload was JSON, `msg.original_payload_fields` holds the parsed object.
-
-### Quirks to be aware of
-
-- Two URL helpers exist. `generateStandardURL` (used by the queue nodes) is just `baseUrl + path`. `generateUrl` (used by the REST, import, and transform nodes) also embeds `username:password@` in the URL, alongside the auth headers.
-- In `ServicelyInstance`, the `authtype` inference block is overwritten by the line after it, which falls back to `"password"`. The editor's default is `token_hmac_header`.
-- Connection secrets are stored in the node's `defaults`, not in Node-RED `credentials` (which is empty). As a result they are included when flows are exported.
-- HTTP calls use the deprecated `request` library, with a cookie jar enabled.
+- Errors go through `done(err)` (or `node.error(text, msg)` where no input message exists) with the message attached, so **Catch** nodes receive them. HTTP errors also set `msg.statusCode`. Every HTTP callback must be crash-safe: an exception inside an async callback terminates the whole Node-RED runtime.
+- Nodes share context through underscore-prefixed `msg` fields, which must survive intermediate nodes: `_connectionNode` (connection config node id), `_reply_to` (queue action id), `_original_payload` (the raw dequeued item).
+- Never put credentials in URLs (`fetch` rejects them anyway). Auth only goes in headers.
+- **Legacy-flow compatibility.** The editor only keeps properties listed in `defaults` when it re-saves a node, so the legacy plain-text `username` / `password` / `token` / `secret` stay declared (hidden) in `servicely-connection.html`. `oneditprepare` copies them into the credential inputs, and `oneditsave` clears them. Don't remove those defaults, or existing flows lose their credentials on the next full deploy.

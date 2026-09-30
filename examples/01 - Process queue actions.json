@@ -1,0 +1,96 @@
+[
+  {
+    "id": "ex-q",
+    "type": "tab",
+    "label": "Process queue actions",
+    "info": "Claims 'ping' actions from the queue, processes them and replies. Any error is reported back with the Failure node."
+  },
+  {
+    "id": "q1",
+    "type": "servicely-queue",
+    "z": "ex-q",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      [
+        "f1"
+      ]
+    ],
+    "name": "",
+    "connection": "ex-conn",
+    "subject": "ping",
+    "pollingInterval": 5,
+    "requestCount": 10,
+    "identifier": "node-red"
+  },
+  {
+    "id": "f1",
+    "type": "function",
+    "z": "ex-q",
+    "x": 340,
+    "y": 100,
+    "wires": [
+      [
+        "p1"
+      ]
+    ],
+    "name": "Process",
+    "func": "// Do the work for this action here.\n// Keep msg._reply_to and msg._connectionNode so the reply nodes can respond.\nmsg.payload = { received: msg.payload, processedAt: new Date().toISOString() };\nreturn msg;",
+    "outputs": 1
+  },
+  {
+    "id": "p1",
+    "type": "servicely-progress",
+    "z": "ex-q",
+    "x": 530,
+    "y": 100,
+    "wires": [
+      [
+        "s1"
+      ]
+    ],
+    "name": "",
+    "progressMessage": "Processing"
+  },
+  {
+    "id": "s1",
+    "type": "servicely-success",
+    "z": "ex-q",
+    "x": 720,
+    "y": 100,
+    "wires": [],
+    "name": ""
+  },
+  {
+    "id": "c1",
+    "type": "catch",
+    "z": "ex-q",
+    "x": 140,
+    "y": 180,
+    "wires": [
+      [
+        "x1"
+      ]
+    ],
+    "name": "Any error",
+    "scope": null,
+    "uncaught": false
+  },
+  {
+    "id": "x1",
+    "type": "servicely-failure",
+    "z": "ex-q",
+    "x": 340,
+    "y": 180,
+    "wires": [],
+    "name": ""
+  },
+  {
+    "id": "ex-conn",
+    "type": "servicely-connection",
+    "name": "My instance",
+    "baseUrl": "https://instance.servicely.ai/",
+    "queue": "node-red.default.queue",
+    "authtype": "token_hmac_header"
+  }
+]
