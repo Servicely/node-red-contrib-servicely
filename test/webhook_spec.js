@@ -262,6 +262,16 @@ describe("servicely-webhook", function () {
             assert.match(res.body.error, /^Looking up webhooks needs Servicely 1\.11\.122 or later/);
         });
 
+        it("flags older builds that answer with no static resource", async function () {
+            await load({});
+            for (const status of [500, 404, 400]) {
+                server.handler = (req, res) => json(res, status, { message: "No static resource _webhook_admin/v2/inbound." });
+                const res = await admin.request().get("/servicely/conn/webhooks").expect(404);
+                assert.strictEqual(res.body.unsupported, true, "status " + status);
+                assert.match(res.body.error, /needs Servicely 1\.11\.122 or later/);
+            }
+        });
+
         it("passes on webhook-not-found errors from the instance", async function () {
             server.handler = (req, res) => json(res, 404, { _error: "Webhook not found" });
             await load({});

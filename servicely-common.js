@@ -16,6 +16,10 @@ const HMAC_MODES = [AUTH_HMAC, AUTH_HMAC_BODY];
  */
 function isUnsupported(statusCode, body) {
     let isObject = body != null && typeof body == "object";
+    if (isObject && body._error === undefined && typeof body.message == "string" && /^No static resource /.test(body.message)) {
+        // An older build with no route for the path, whatever status it answers with
+        return true;
+    }
     if (statusCode === 404 || statusCode === 405) {
         return !(isObject && body._error !== undefined);
     }
@@ -439,7 +443,8 @@ module.exports = {
      * Sends a request to the instance on behalf of an editor admin route and relays the JSON response.
      * Upstream 400/401/403/404/409 keep their status, and other errors become 502, all as {error}. The instance
      * lacks the endpoint when it answers 404 or 405 without an `_error`, 401 {"loginRequired": true} (an older
-     * build's web app), or succeeds without the contract's `data`: {error: unsupportedMessage, unsupported: true},
+     * build's web app), {"message": "No static resource ..."} with any status (an older build without the route),
+     * or succeeds without the contract's `data`: {error: unsupportedMessage, unsupported: true},
      * with status 404. `options.describeHttpError` overrides the error text, as for performRequest.
      */
     relayToEditor: function(RED, res, options, unsupportedMessage) {
