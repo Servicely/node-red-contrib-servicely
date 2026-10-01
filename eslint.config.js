@@ -22,6 +22,14 @@ module.exports = [
         }
     },
     {
+        // Scripts the editor loads from resources/
+        files: ["resources/**/*.js"],
+        languageOptions: {
+            sourceType: "script",
+            globals: Object.assign({}, globals.browser, globals.jquery, { RED: "readonly" })
+        }
+    },
+    {
         // Editor definitions: inline <script> blocks run in the Node-RED editor
         files: ["**/*.html"],
         plugins: { html },

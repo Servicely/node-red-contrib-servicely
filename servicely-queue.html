@@ -1,3 +1,4 @@
+<script src="resources/node-red-contrib-servicely/servicely-editor.js"></script>
 <script type="text/javascript">
     /**
      * Registers a node that connects to a Servicely Instance and claims tasks from a work queue.
@@ -86,26 +87,31 @@
     <div class="form-row">
         <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
         <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+        <div class="servicely-hint">The instance. The queue is set on the connection.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-subject"><i class="fa fa-bolt"></i> Action name</label>
         <input type="text" id="node-input-subject" placeholder="Action name">
+        <div class="servicely-hint">The subject of the actions to claim, e.g. <code>ping</code>.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-pollingInterval"><i class="fa fa-clock-o"></i> Poll every</label>
         <input type="text" id="node-input-pollingInterval" placeholder="5" style="width: 80px"> seconds
+        <div class="servicely-hint">After a full batch, the node polls again straight away.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-requestCount"><i class="fa fa-list-ol"></i> Batch size</label>
         <input type="text" id="node-input-requestCount" placeholder="10" style="width: 80px"> actions per poll
+        <div class="servicely-hint">The most actions claimed per poll.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-identifier"><i class="fa fa-id-badge"></i> Identifier</label>
         <input type="text" id="node-input-identifier" placeholder="node-red">
+        <div class="servicely-hint">Recorded on each action as <code>claimed_by</code>, to tell Node-RED servers apart.</div>
     </div>
 
     <hr />
@@ -117,6 +123,8 @@
 </script>
 
 <script type="text/html" data-template-name="servicely-success">
+    <div class="form-tips">Answers the action in <code>msg._reply_to</code> as completed, with <code>msg.payload</code> as its result.</div>
+
     <div class="form-row">
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
@@ -124,6 +132,8 @@
 </script>
 
 <script type="text/html" data-template-name="servicely-failure">
+    <div class="form-tips">Answers the action in <code>msg._reply_to</code> as failed, with the caught error (or <code>msg.payload</code>) as its description. Wire a Catch node to it.</div>
+
     <div class="form-row">
         <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
@@ -134,6 +144,7 @@
     <div class="form-row">
         <label for="node-input-progressMessage"><i class="fa fa-comment"></i> Message</label>
         <input type="text" id="node-input-progressMessage" placeholder="Progress message (or set msg.progress)">
+        <div class="servicely-hint">Sent when the message has no <code>msg.progress</code>. Use it before the final Success or Failure, never after.</div>
     </div>
 
     <hr />
@@ -145,84 +156,151 @@
 </script>
 
 <script type="text/html" data-help-name="servicely-queue">
-    <p>Claims actions from a Servicely asynchronous queue and sends one message per action.</p>
+    <p>Claims actions from a Servicely asynchronous queue (<code>/controller/AsyncIntegration</code>) and sends one
+        message per action. Answer each one with a <b>Success</b> or <b>Failure</b> node.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Connection</dt>
+        <dd>The instance, and the queue (set on the connection) to claim actions from.</dd>
+        <dt>Action name <span class="property-type">string</span></dt>
+        <dd>The actions to claim: the queue entries' <code>subject</code>, e.g. <code>ping</code>. Other actions on
+            the queue are left for other nodes.</dd>
+        <dt>Poll every <span class="property-type">number</span></dt>
+        <dd>Seconds to wait between polls. Default 5.</dd>
+        <dt>Batch size <span class="property-type">number</span></dt>
+        <dd>The most actions claimed per poll. Default 10. When a poll returns a full batch, the node polls again
+            straight away, so a backlog is worked through quickly.</dd>
+        <dt>Identifier <span class="property-type">string</span></dt>
+        <dd>Who claimed the actions, recorded on each one as <code>claimed_by</code>, so the instance can tell several
+            Node-RED servers apart. Default <code>node-red</code>.</dd>
+    </dl>
 
     <h3>Outputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">object | string</span></dt>
-        <dd>The action's payload. JSON payloads are parsed into an object.</dd>
+        <dd>The action's payload. The instance sends it as a string; JSON (starting with <code>{</code> or
+            <code>[</code>) is parsed into an object or array.</dd>
         <dt>original_payload_fields <span class="property-type">object</span></dt>
-        <dd>A copy of the parsed payload, for use in <b>Change</b> nodes.</dd>
+        <dd>A copy of the parsed payload, which stays available after <code>msg.payload</code> has been changed.</dd>
         <dt>_reply_to <span class="property-type">string</span></dt>
-        <dd>The action ID. Used by the <b>Success</b>, <b>Failure</b> and <b>Progress</b> nodes to reply.</dd>
+        <dd>The action's id, which the <b>Success</b>, <b>Failure</b> and <b>Progress</b> nodes reply to.</dd>
         <dt>_connectionNode <span class="property-type">string</span></dt>
-        <dd>The connection the action came from.</dd>
+        <dd>The connection the action came from, which the reply nodes use.</dd>
         <dt>_original_payload <span class="property-type">object</span></dt>
-        <dd>The action as returned by the queue.</dd>
+        <dd>The action as the queue returned it: <code>id</code>, <code>queue</code>, <code>subject</code>,
+            <code>source</code>, <code>payload</code> (the string), <code>state</code> (<code>processing</code>),
+            <code>sequence</code>, <code>created_on</code>, <code>claimed_by</code> and <code>claimed_at</code>.</dd>
         <dt>parts <span class="property-type">object</span></dt>
-        <dd>The action's position in the batch, so a <b>Join</b> node in automatic mode can recombine them.</dd>
+        <dd>The action's position in the batch (<code>id</code>, <code>index</code>, <code>count</code>), so a
+            <b>Join</b> node in automatic mode can recombine them.</dd>
     </dl>
 
+    <h3>Always reply</h3>
+    <p>A claimed action stays <i>processing</i> until a <b>Success</b> or <b>Failure</b> node answers it. The instance
+        never times it out or offers it to a later poll, so an action that is dropped, or that Node-RED was holding
+        when it stopped, stays stranded until someone resets it in Servicely. So:</p>
+    <ul>
+        <li>end every path of the flow in a <b>Success</b> or <b>Failure</b> node;</li>
+        <li>wire a <b>Catch</b> node to a <b>Failure</b> node, so any error while processing is reported back. An
+            action whose payload isn't valid JSON is reported to Catch too, with its <code>_reply_to</code>;</li>
+        <li>keep <code>_reply_to</code> and <code>_connectionNode</code> on the message: nodes that build a new message
+            (e.g. some function nodes) drop them;</li>
+        <li>reply to each action only once at the end. The instance accepts a reply to a finished action and applies
+            it: a <b>Progress</b> update after <b>Success</b> or <b>Failure</b> sets the action back to <i>pending</i>,
+            where it stays stranded.</li>
+    </ul>
+    <p>Each reply is stored as a new response record on the queue, holding the whole reply. For an action created by
+        an Intelligent Action, the reply also sets the action's result on its record.</p>
+
     <h3>Details</h3>
-    <p>The node polls the queue configured on the connection for actions named <i>Action name</i>. It waits for
-        each poll to finish before scheduling the next one. When a full batch is returned it polls again straight
-        away, so a backlog is worked through quickly.</p>
-    <p>Keep the <code>_reply_to</code> and <code>_connectionNode</code> properties on the message so the reply
-        nodes can respond. Polling errors can be handled with a <b>Catch</b> node.</p>
-    <p><i>Identifier</i> is sent with each poll, so the instance can tell several Node-RED instances apart.</p>
+    <p>The node waits for each poll to finish before scheduling the next, and starts after a short random delay.
+        A poll that fails (e.g. a 401 from wrong credentials) goes to a <b>Catch</b> node with the error text in
+        <code>msg.payload</code> and <code>msg.statusCode</code>, and polling carries on.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-success">
-    <p>Marks an action claimed by the <b>Queue</b> node as completed successfully.</p>
+    <p>Answers an action claimed by the <b>Queue</b> node as completed. The action's state becomes
+        <i>processed</i>.</p>
 
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">any</span></dt>
-        <dd>The result returned to Servicely.</dd>
+        <dd>The result, stored on the action's response in Servicely. An object or array is sent as JSON text, since an
+            Intelligent Action fails on anything else.</dd>
+        <dt class="optional">rc <span class="property-type">object</span></dt>
+        <dd>When <code>msg.rc.code</code> is not 0, <code>msg.rc.message</code> is sent instead of the payload (as set
+            by e.g. the <b>exec</b> node).</dd>
         <dt>_reply_to <span class="property-type">string</span></dt>
-        <dd>The action ID, set by the <b>Queue</b> node.</dd>
+        <dd>The action's id, set by the <b>Queue</b> node.</dd>
         <dt>_connectionNode <span class="property-type">string</span></dt>
-        <dd>The connection, set by the <b>Queue</b> node.</dd>
+        <dd>The connection the action came from, set by the <b>Queue</b> node.</dd>
     </dl>
 
     <h3>Details</h3>
-    <p>If the reply fails, the error can be handled with a <b>Catch</b> node.</p>
+    <p>The node has no output. If the reply fails, e.g. because the connection is missing or the instance rejects
+        it, the error goes to a <b>Catch</b> node, and the action stays <i>processing</i>. The instance answers an
+        unknown <code>msg._reply_to</code> with a 500 script error.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-failure">
-    <p>Marks an action claimed by the <b>Queue</b> node as failed.</p>
+    <p>Answers an action claimed by the <b>Queue</b> node as failed. The action's state becomes <i>error</i>.</p>
 
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">any</span></dt>
-        <dd>The error details returned to Servicely.</dd>
+        <dd>The error details, stored on the action's response in Servicely. An object or array is sent as JSON
+            text.</dd>
+        <dt class="optional">error <span class="property-type">object</span></dt>
+        <dd>Set by a <b>Catch</b> node. Its <code>message</code> becomes the action's failure description; without
+            it, the description is the payload.</dd>
         <dt class="optional">rc <span class="property-type">object</span></dt>
-        <dd>When <code>msg.rc.code</code> is not 0, <code>msg.rc.message</code> is returned instead of the payload
-            (as set by e.g. the <b>exec</b> node).</dd>
+        <dd>When <code>msg.rc.code</code> is not 0, <code>msg.rc.message</code> is sent instead of the payload (as set
+            by e.g. the <b>exec</b> node).</dd>
         <dt>_reply_to <span class="property-type">string</span></dt>
-        <dd>The action ID, set by the <b>Queue</b> node.</dd>
+        <dd>The action's id, set by the <b>Queue</b> node.</dd>
         <dt>_connectionNode <span class="property-type">string</span></dt>
-        <dd>The connection, set by the <b>Queue</b> node.</dd>
+        <dd>The connection the action came from, set by the <b>Queue</b> node.</dd>
     </dl>
 
     <h3>Details</h3>
-    <p>A common pattern is a <b>Catch</b> node wired to a <b>Failure</b> node, so any error while processing an
-        action is reported back to Servicely.</p>
+    <p>Wire a <b>Catch</b> node to a <b>Failure</b> node, so any error while processing an action is reported back
+        instead of leaving the action stranded (see the <b>Queue</b> node). The node has no output. If the reply
+        itself fails, the error goes to a <b>Catch</b> node.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-progress">
-    <p>Sends a progress update for an action claimed by the <b>Queue</b> node, and passes the message on.</p>
+    <p>Sends a progress update for an action claimed by the <b>Queue</b> node, then passes the message on.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Message <span class="property-type">string</span></dt>
+        <dd>The progress text, used when the message has no <code>msg.progress</code>.</dd>
+    </dl>
 
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt class="optional">progress <span class="property-type">string</span></dt>
-        <dd>The progress message. Overrides the message configured on the node.</dd>
+        <dd>The progress text. Overrides the node's <i>Message</i>. An object or array is sent as JSON text.</dd>
+        <dt class="optional">rc <span class="property-type">object</span></dt>
+        <dd>When <code>msg.rc.code</code> is not 0, <code>msg.rc.message</code> is sent instead.</dd>
         <dt>_reply_to <span class="property-type">string</span></dt>
-        <dd>The action ID, set by the <b>Queue</b> node.</dd>
+        <dd>The action's id, set by the <b>Queue</b> node.</dd>
         <dt>_connectionNode <span class="property-type">string</span></dt>
-        <dd>The connection, set by the <b>Queue</b> node.</dd>
+        <dd>The connection the action came from, set by the <b>Queue</b> node.</dd>
     </dl>
 
     <h3>Outputs</h3>
-    <p>The input message, unchanged.</p>
+    <p>The input message, unchanged, once the instance has accepted the update. The instance applies replies in the
+        order they arrive, so the message waits: a <b>Success</b> straight after it can't overtake the update and be
+        undone by it.</p>
+
+    <h3>Details</h3>
+    <p>The update sets the action to <i>pending</i>. No later poll picks up a pending action, and nothing times it
+        out, so it still needs a <b>Success</b> or <b>Failure</b> reply at the end. For an action created by an
+        Intelligent Action, the record shows the action as executing, with the progress text as its result.</p>
+    <p>Only send updates between the <b>Queue</b> node and the final reply. An update after <b>Success</b> or
+        <b>Failure</b> reopens the action and strands it as <i>pending</i>.</p>
+    <p>If the update fails, the error goes to a <b>Catch</b> node and the message isn't passed on, so a <b>Catch</b>
+        wired to a <b>Failure</b> node gives the action its only final reply.</p>
 </script>

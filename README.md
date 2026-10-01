@@ -7,6 +7,8 @@ data imports and transforms, the REST API and Inbound Webhooks.
 
 - Node-RED 3.0 or later (tested with Node-RED 5)
 - Node.js 18 or later (Node-RED 5 requires 22.9 or later)
+- Servicely 1.11.122 or later for the edit dialogs' lookups (webhooks, import tables, import sources and
+  transforms) and *Test auth*. On earlier versions the dialogs say so, and names are typed instead.
 
 ## Install
 
@@ -25,8 +27,9 @@ npm install node-red-contrib-servicely
 | **Queue** | Claims actions from a Servicely asynchronous queue, one message per action. |
 | **Success** / **Failure** | Reply to an action claimed by the Queue node. |
 | **Progress** | Sends a progress update for an action, and passes the message on. |
-| **REST** | Calls the Servicely REST API or an Inbound Webhook. |
-| **Import** / **Transform** | Load data into an Import Table and run the transform. |
+| **REST** | Calls the Servicely REST API. |
+| **Webhook** | Calls an Inbound Webhook (V2), with a picker for the instance's webhooks and their mappings. |
+| **Import** / **Transform** | Load data into an Import Table and run the transform, with pickers for the instance's import tables, import sources and transforms. |
 | **Connector** | Adds a connection to the message for the nodes that follow. |
 
 Each node has full help in the editor's help sidebar. Example flows are available from **Menu → Import → Examples**.

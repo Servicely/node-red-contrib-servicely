@@ -6,11 +6,8 @@ module.exports = function (RED) {
     const METHODS_WITH_BODY = ["POST", "PATCH", "PUT"];
     const METHODS = ["GET", "DELETE"].concat(METHODS_WITH_BODY);
 
-    /**
-     * Returns the connection configured on the node, falling back to the one carried on the message.
-     */
     function getConnection(config, msg) {
-        return RED.nodes.getNode(config.connection || msg._connectionNode);
+        return common.getConnection(RED, config, msg);
     }
 
     function propertyName(value, fallback) {
@@ -77,49 +74,53 @@ module.exports = function (RED) {
     }
 
     function performRequest(method, url, node, message, msg, headers, send, done, onSuccess) {
-        node.status({fill:"blue",shape:"dot",text: ""});
+        common.performRequest(node, { url: url, method: method, json: message, headers: headers }, msg, send, done, onSuccess);
+    }
 
-        let requestOptions = {
-            url: url,
-            method: method,
-            json: message,
-            headers: headers
-        };
+    const setErrorMessage = common.reportError;
 
-        common.sendRequest(requestOptions, (err, res, body) => {
-            if (err) {
-                setErrorMessage(node, msg, done, err);
-            } else if (res.statusCode >= 400) {
-                setErrorMessage(node, msg, done, common.describeHttpError(res.statusCode, body), res.statusCode);
-            } else if (typeof body == "string" && body !== "") {
-                setErrorMessage(node, msg, done, "Unexpected non-JSON response (" + res.statusCode + "): " + body.substring(0, 200), res.statusCode);
-            } else {
-                msg.statusCode = res.statusCode;
-                onSuccess(body);
-
-                send(msg);
-                node.status({});
-                done();
-            }
-        });
+    /**
+     * Posts an ImportManager action with the node's authentication: its token override, otherwise the
+     * connection's. The body is serialised once, so that HMAC body signing covers exactly the bytes sent.
+     * Signed headers other than Date are taken from msg.headers.
+     */
+    function importManagerRequest(node, config, connection, msg, message, send, done, onSuccess, describe500) {
+        let auth;
+        let url;
+        let body = JSON.stringify(message);
+        let headers;
+        try {
+            auth = common.nodeAuth(node, config, connection);
+            url = common.generateStandardURL(connection, "controller/ImportManager");
+            headers = common.signedExtraHeaders(auth, msg.headers);
+            Object.assign(headers, common.generateHeaders(auth, { method: "POST", url: url, body: body, headers: headers }));
+        } catch (e) {
+            setErrorMessage(node, msg, done, e.signedHeader ? e.message + ": add it to msg.headers" : e);
+            return;
+        }
+        common.performRequest(node, {
+            url: url, method: "POST", body: body, headers: headers,
+            // The instance answers a name it doesn't know with a script error that doesn't say which name
+            describeHttpError: (statusCode, responseBody) => (statusCode === 500 ? describe500 + ": " : "") + common.describeHttpError(statusCode, responseBody)
+        }, msg, send, done, onSuccess);
     }
 
     /**
-     * Reports an error against the message so that Catch nodes receive it (msg.error), with the
-     * HTTP status in msg.statusCode when the error came from a response.
+     * Writes an ImportManager result to the node's output property. The instance reports a failed import or
+     * transform with success: false in a 200 response, which is thrown so the message goes to Catch nodes,
+     * with the result still on it.
      */
-    function setErrorMessage(node, msg, done, error, statusCode) {
-        if (error instanceof Error) {
-            error = error.message;
+    function storeResult(msg, config, fallback, body, describeFailure) {
+        let result = selectOutput("auto", body);
+        RED.util.setMessageProperty(msg, propertyName(config.output_property, fallback), result, true);
+        if (result != null && typeof result == "object" && result.success === false) {
+            throw new Error(describeFailure(result));
         }
-        error = String(error);
+    }
 
-        node.status({fill: "red", shape: "dot", text: error});
-        msg.payload = error;
-        if (statusCode !== undefined) {
-            msg.statusCode = statusCode;
-        }
-        done(error);
+    /** The rows to import: the instance only accepts an array of objects, so a single object becomes one row. */
+    function importRows(value) {
+        return (value != null && typeof value == "object" && !Array.isArray(value)) ? [value] : value;
     }
 
     function ImportNode(config) {
@@ -143,9 +144,6 @@ module.exports = function (RED) {
                 return;
             }
 
-            let url = common.generateStandardURL(connection, "controller/ImportManager");
-            let headers = common.generateHeaders(connection);
-
             let importMetadata = [Object.assign({
                 "lastImportTimestamp": new Date().getTime().toString()
             }, msg.import_metadata)];
@@ -154,13 +152,21 @@ module.exports = function (RED) {
                 action: "import",
                 import_name: config.import_name || msg.import_name,
                 import_table: config.import_table || msg.import_table,
-                import_data: JSON.stringify(RED.util.getMessageProperty(msg, propertyName(config.input_property, "payload"))),
+                import_data: JSON.stringify(importRows(RED.util.getMessageProperty(msg, propertyName(config.input_property, "payload")))),
                 import_metadata: JSON.stringify(importMetadata)
             };
 
-            performRequest("POST", url, node, message, msg, headers, send, done, function (body) {
-                RED.util.setMessageProperty(msg, propertyName(config.output_property, "import_result"), selectOutput("auto", body), true);
-            });
+            importManagerRequest(node, config, connection, msg, message, send, done, function (body) {
+                storeResult(msg, config, "import_result", body, result => "Import failed: " + (result.error || "the instance reported success: false"));
+                // So a Transform node after this one needs no settings of its own: it transforms the same table,
+                // with the transform chosen here
+                if (message.import_table) {
+                    msg.import_table = message.import_table;
+                }
+                if (config.transform_name) {
+                    msg.transform_name = config.transform_name;
+                }
+            }, "Import failed on the instance (an unknown import table or import source gives this error too: Test auth tells which)");
         });
     }
 
@@ -185,22 +191,87 @@ module.exports = function (RED) {
                 return;
             }
 
-            let url = common.generateStandardURL(connection, "controller/ImportManager");
-            let headers = common.generateHeaders(connection);
-
             let message = {
                 action: "transform",
                 transform_name: config.transform_name || msg.transform_name,
                 import_table: config.import_table || msg.import_table
             };
+            // The instance runs the transform against the import table sent, and fails without one: it doesn't
+            // fall back to the transform's default
+            if (!message.import_table) {
+                setErrorMessage(node, msg, done, "The import table is not set: set Import table on the node, or msg.import_table");
+                return;
+            }
+            if (!message.transform_name) {
+                setErrorMessage(node, msg, done, "The transform is not set: set Import transform on the node, msg.transform_name, or Transform on the Import node before it");
+                return;
+            }
 
-            performRequest("POST", url, node, message, msg, headers, send, done, function (body) {
-                RED.util.setMessageProperty(msg, propertyName(config.output_property, "transform_result"), selectOutput("auto", body), true);
-            });
+            importManagerRequest(node, config, connection, msg, message, send, done, function (body) {
+                storeResult(msg, config, "transform_result", body, function (result) {
+                    let load = result.importLoad && result.importLoad.Number ? " (" + result.importLoad.Number + ")" : "";
+                    return "Transform failed" + load + ": " + (result.error || "the instance reported success: false") +
+                        (result.rowFailures ? ". Each row's reason is in the result's importLoad.Log" : "");
+                });
+            }, "Transform failed on the instance (an unknown transform or import table gives this error too: Test auth tells which)");
         });
     }
 
     RED.nodes.registerType("servicely-rest", RestRequestNode);
-    RED.nodes.registerType("servicely-import", ImportNode);
-    RED.nodes.registerType("servicely-transform", TransformNode);
+    // The token override's credentials, as for the Webhook node
+    const OVERRIDE_CREDENTIALS = {
+        credentials: {
+            apiToken: { type: "password" },
+            apiSecret: { type: "password" }
+        }
+    };
+
+    RED.nodes.registerType("servicely-import", ImportNode, OVERRIDE_CREDENTIALS);
+    RED.nodes.registerType("servicely-transform", TransformNode, OVERRIDE_CREDENTIALS);
+
+    /** A path of the instance's import discovery API, e.g. _import_admin/v1/transforms?import_table=x */
+    function importAdminPath(path, params) {
+        let query = [];
+        Object.keys(params || {}).forEach(name => {
+            let value = params[name];
+            if (value != null && String(value).trim() !== "") {
+                query.push(encodeURIComponent(name) + "=" + encodeURIComponent(String(value).trim()));
+            }
+        });
+        return "_import_admin/v1/" + path + (query.length ? "?" + query.join("&") : "");
+    }
+
+    // Editor lookups: import tables with their fields, import transforms with their field mappings, and import
+    // sources. Tables and transforms are read by id or name; names are unique across the instance, or the
+    // instance answers 409.
+    const UNSUPPORTED = common.requiresVersion("Looking up import tables, sources and transforms", "Type the names instead: the node works without lookups.");
+    common.registerDiscoveryRoute(RED, "import-tables", () => importAdminPath("tables"), UNSUPPORTED);
+    common.registerDiscoveryRoute(RED, "import-tables/:name", params => importAdminPath("tables/" + encodeURIComponent(params.name)), UNSUPPORTED);
+    common.registerDiscoveryRoute(RED, "transforms", (params, query) => importAdminPath("transforms", { import_table: query.import_table }), UNSUPPORTED);
+    common.registerDiscoveryRoute(RED, "transforms/:name", params => importAdminPath("transforms/" + encodeURIComponent(params.name)), UNSUPPORTED);
+    common.registerDiscoveryRoute(RED, "import-sources", () => importAdminPath("sources"), UNSUPPORTED);
+
+    function describeAuthCheckError(statusCode, body) {
+        if (statusCode === 401) {
+            return "Unauthorized: check the token and secret, and for HMAC that the clock is within 5 minutes of the instance's";
+        }
+        return common.describeHttpError(statusCode, body);
+    }
+
+    /**
+     * Editor "Test auth": checks the dialog's credentials, and whether the import table (and transform)
+     * entered resolve, without importing or transforming anything. Both are optional, since they can come
+     * from the message. The instance evaluates a token's URL Allowed Paths for the check as
+     * controller/ImportManager, so a token limited to imports can run it.
+     */
+    function registerImportAuthTest(route, permission) {
+        common.registerAuthTest(RED, route, permission, function (body) {
+            let params = { import_table: body.import_table, transform_name: body.transform_name };
+            return { path: importAdminPath("auth-check", params), describeHttpError: describeAuthCheckError };
+        }, common.requiresVersion("Test auth", "The node itself works on earlier versions."));
+    }
+
+    // The Import node's Transform is checked too, since the node passes it on
+    registerImportAuthTest("import-auth-test", "servicely-import.write");
+    registerImportAuthTest("transform-auth-test", "servicely-transform.write");
 };

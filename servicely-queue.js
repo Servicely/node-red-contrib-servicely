@@ -217,9 +217,16 @@ module.exports = function (RED) {
                 let replyMessage = RED.util.cloneMessage(msg);
                 replyMessage.payload = (msg.progress != null) ? msg.progress : config.progressMessage;
 
-                // Keep the message going; the status update is sent alongside it
-                send(msg);
-                performReply(replyMessage, node, done);
+                // Pass the message on only once the instance has the update: the instance applies replies
+                // in the order it receives them, so a Success that overtook the update would be undone by it
+                performReply(replyMessage, node, function (err) {
+                    if (err) {
+                        done(err);
+                        return;
+                    }
+                    send(msg);
+                    done();
+                });
             } else {
                 performReply(msg, node, done);
             }
@@ -253,25 +260,37 @@ module.exports = function (RED) {
         done(error);
     }
 
+    /**
+     * Turns a reply value into what the instance accepts: an Intelligent Action fails on an object or array,
+     * so those are sent as JSON text.
+     */
+    function replyValue(value) {
+        return (value !== null && typeof value === "object") ? JSON.stringify(value) : value;
+    }
+
     function performReply(msg, node, done) {
         let url = generateQueueUrl(msg._connectionNode);
         let headers = generateHeaders(msg._connectionNode);
 
-        let responseObj;
+        let failedCommand = msg.rc && msg.rc.code !== 0;
+        let responseObj = replyValue(failedCommand ? msg.rc.message : msg.payload);
 
-        if (msg.rc && msg.rc.code !== 0) {
-            responseObj = msg.rc.message;
-        } else {
-            responseObj = msg.payload;
-        }
+        // The instance records who replied, for diagnostics only: use the Queue node's identifier
+        let claimedBy = msg._original_payload && msg._original_payload.claimed_by;
 
         let message = {
             reply_to: msg._reply_to,
             action: node._action,
-            identifier: DEFAULT_IDENTIFIER,
+            identifier: (typeof claimedBy === "string" && claimedBy) ? claimedBy : DEFAULT_IDENTIFIER,
             status: node._status,
             payload: responseObj
         };
+
+        // The instance takes a failure's description from "error"; after a Catch node, that's the caught error
+        if (node._action === "fail") {
+            let caught = msg.error && typeof msg.error.message === "string" ? msg.error.message : null;
+            message.error = failedCommand ? responseObj : (caught != null ? caught : responseObj);
+        }
 
         node.status({fill:"blue",shape:"dot",text: ""});
 
@@ -281,7 +300,9 @@ module.exports = function (RED) {
                 return;
             }
             if (res.statusCode >= 400) {
-                reportReplyError(node, msg, done, "Error on reply: " + common.describeHttpError(res.statusCode, body), res.statusCode);
+                // The instance answers an unknown action id with a 500 script error that doesn't say so
+                let hint = res.statusCode === 500 ? "Error on reply (is msg._reply_to an action on this queue?): " : "Error on reply: ";
+                reportReplyError(node, msg, done, hint + common.describeHttpError(res.statusCode, body), res.statusCode);
                 return;
             }
             node.status({});

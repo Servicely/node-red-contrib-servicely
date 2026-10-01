@@ -1,3 +1,4 @@
+<script src="resources/node-red-contrib-servicely/servicely-editor.js"></script>
 <script type="text/javascript">
     /**
      * Registers a node that calls the Servicely REST API (or an Inbound Webhook).
@@ -26,51 +27,581 @@
             $("#node-input-method").val((this.method || "GET").toUpperCase());
         }
     });
+</script>
 
-    /**
-     * Registers a node that executes an ImportManager transform.
-     */
-    RED.nodes.registerType('servicely-transform', {
-        category: 'servicely-rest',
-        color: '#62f518',
-        defaults: {
-            name: {value: null},
-            connection: {value: "", type: "servicely-connection", required: false},
-            transform_name: {value: null, required: false},
-            import_table: {value: null, required: false},
-            output_property: { value: "transform_result", required: false }
-        },
-        inputs: 1,
-        outputs: 1,
-        paletteLabel: 'Transform',
-        icon: "servicely-image-nodered.png",
-        label: function () {
-            return this.name || this.transform_name || "Transform";
-        }
-    });
+<script type="text/javascript">
+    (function () {
+        const E = window.ServicelyEditor;
 
-    /**
-     * Registers a node that executes an ImportManager import.
-     */
-    RED.nodes.registerType('servicely-import', {
-        category: 'servicely-rest',
-        color: '#62f518',
-        defaults: {
-            name: { value: null },
-            connection: {value: "", type: "servicely-connection", required: false},
-            import_name: {value: null, required: false},
-            import_table: {value: null, required: false},
-            input_property: { value: "payload", required: false },
-            output_property: { value: "import_result", required: false }
-        },
-        inputs: 1,
-        outputs: 1,
-        paletteLabel: 'Import',
-        icon: "servicely-image-nodered.png",
-        label: function () {
-            return this.name || this.import_table || "Import";
+        // Import source types, as the instance stores them
+        const SOURCE_TYPES = { attachment: "Attachment", file: "File", jdbc: "JDBC", ldap: "LDAP", soap: "SOAP", inbound: "Inbound", rest: "REST" };
+
+        // A transform's load options, as the instance names them
+        const LOAD_OPTIONS = {
+            suppressAudit: "suppress audit",
+            suppressTriggers: "suppress triggers",
+            suppressValidation: "suppress validation",
+            preserveSourceSystemFields: "preserve source system fields",
+            resetProcessedRecords: "reset processed records"
+        };
+
+        /** A literal name entered on the node, or "" when it is blank or set from the message. */
+        function literal(value) {
+            value = (value || "").trim();
+            return E.hasPlaceholder(value) ? "" : value;
         }
-    });
+
+        /**
+         * Whether runs can't resolve a record's name. Import and transform runs find import tables, transforms
+         * and import sources by name, and the instance reports the names they can't resolve as `nameShared`.
+         */
+        function isShared(x) {
+            return !!x && x.nameShared === true;
+        }
+
+        function sharedNameWarning(what, name) {
+            return "Several " + what + " are named '" + name + "'. Runs fail until the name is unique: rename one in Servicely.";
+        }
+
+        /** Whether the list has several records the value names, so one has to be chosen from the list. */
+        function listedMoreThanOnce(list, value) {
+            return list.filter(x => E.matchesName(value, x)).length > 1;
+        }
+
+        /**
+         * What to read a record's details by: the id of the one listed with that name (names with "/" can
+         * only be read by id), otherwise the name, which the instance answers with 409 when it is shared.
+         */
+        function detailRef(list, value) {
+            let matches = list.filter(x => E.matchesName(value, x));
+            return (matches.length === 1 && matches[0].id) ? matches[0].id : value;
+        }
+
+        /**
+         * A list's option for what is entered on the node: its index, or "" when none or several match
+         * (which `onShared` is told about).
+         */
+        function selectEntered(select, list, value, onShared) {
+            let matches = list.map((x, index) => E.matchesName(value, x) ? index : -1).filter(i => i >= 0);
+            if (matches.length > 1) {
+                onShared();
+            }
+            select.val(matches.length === 1 ? String(matches[0]) : "");
+            return matches.length === 1 ? list[matches[0]] : null;
+        }
+
+        /** The result of an auth check's `importTable` / `transform` part, appended to the text. */
+        function describeAccess(result, part, what, plural, can, verb) {
+            if (!part) {
+                return;
+            }
+            let name = "'" + (part.name || "") + "'";
+            if (part.exists === false) {
+                result.notes.push(what + " " + name + " not found");
+                result.ok = false;
+                return;
+            }
+            if (part.ambiguous) {
+                result.notes.push("several " + plural + " are named " + name + ", so runs fail until the name is unique");
+                result.ok = false;
+            } else if (part[can] === false) {
+                result.notes.push("can't " + verb + " " + name);
+                result.ok = false;
+            } else if (part[can] === true) {
+                result.notes.push("can " + verb + " " + name);
+            } else if (part.exists) {
+                result.notes.push(what + " " + name + " found");
+            }
+        }
+
+        function describeCheck(data) {
+            let result = { ok: data.authorized !== false, notes: [] };
+            describeAccess(result, data.importTable, "Import table", "import tables", "canImport", "import into");
+            describeAccess(result, data.transform, "Transform", "transforms", "canRun", "run");
+            let notes = result.notes.map(n => " " + n.charAt(0).toUpperCase() + n.slice(1) + ".").join("");
+            return { text: E.describeAuthorized(data, notes ? "." + notes : ""), ok: result.ok };
+        }
+
+        /** A list's option label, marking names runs can't resolve. */
+        function optionLabel(x, label) {
+            return label + (isShared(x) ? " [name shared]" : "");
+        }
+
+        /**
+         * Registers a node that executes an ImportManager transform.
+         */
+        RED.nodes.registerType('servicely-transform', {
+            category: 'servicely-rest',
+            color: '#62f518',
+            defaults: Object.assign({
+                name: { value: null },
+                connection: { value: "", type: "servicely-connection", required: false },
+                transform_name: { value: null, required: false },
+                import_table: { value: null, required: false },
+                output_property: { value: "transform_result", required: false, validate: E.validateProperty("Result prop.") },
+                // The transform's details as last retrieved from the instance ({retrievedAt, data}), kept as
+                // documentation. They contain no secrets or scripts.
+                transform_info: { value: null }
+            }, E.authDefaults()),
+            credentials: E.authCredentials(),
+            inputs: 1,
+            outputs: 1,
+            paletteLabel: 'Transform',
+            icon: "servicely-image-nodered.png",
+            label: function () {
+                return this.name || this.transform_name || "Transform";
+            },
+            oneditprepare: transformEditPrepare,
+            oneditsave: function () {
+                // Details of a different transform than the one now entered are dropped
+                let name = $("#node-input-transform_name").val();
+                this.transform_info = E.snapshotToSave("#node-input-transform-detail", t => E.matchesName(name, t));
+            }
+        });
+
+        function transformEditPrepare() {
+            const node = this;
+            let transforms = [];
+            let currentDetail = null;
+            const saved = E.snapshot("#node-input-transform-detail", node.transform_info, t => E.matchesName($("#node-input-transform_name").val(), t));
+            const dialog = E.dialog(node);
+
+            function loadList() {
+                let table = literal($("#node-input-import_table").val());
+                dialog.setMessage("Loading…");
+                dialog.discover("transforms" + (table ? "?import_table=" + encodeURIComponent(table) : ""), "import transforms", function (body) {
+                    transforms = Array.isArray(body.data) ? body.data : [];
+                    let select = $("#node-input-transform-select").empty();
+                    select.append($("<option>").val("").text(transforms.length ? "Choose a transform…" : "No transforms found"));
+                    transforms.forEach(function (t, index) {
+                        let label = t.name + " (" + (t.importTable || "no import table") + " → " + (t.targetTable || "?") + (t.active === false ? ", inactive" : "") + ")";
+                        select.append($("<option>").val(String(index)).text(optionLabel(t, label)));
+                    });
+                    $(".node-input-transform-select-row").show();
+                    dialog.setMessage("");
+
+                    let current = literal($("#node-input-transform_name").val());
+                    let t = selectEntered(select, transforms, current,
+                        () => dialog.setMessage(sharedNameWarning("transforms", current) + " Choose one to see its details.", true));
+                    if (t) {
+                        loadDetail(t.id || t.name);
+                    }
+                });
+            }
+
+            function loadDetail(ref) {
+                ref = literal(ref);
+                if (!ref) {
+                    showDetail(null);
+                    return;
+                }
+                if (ref.indexOf("/") >= 0 && !transforms.length) {
+                    // Only the id can be looked up: find it in the list first
+                    loadList();
+                    return;
+                }
+                dialog.discover("transforms/" + encodeURIComponent(ref), "import transforms", function (body) {
+                    dialog.setMessage("");
+                    if (body.data) {
+                        saved.keep(body.data);
+                    }
+                    showDetail(body.data || null);
+                });
+            }
+
+            function warningsFor(t) {
+                let warnings = [];
+                if (t.active === false) {
+                    warnings.push("This transform is inactive.");
+                }
+                if (isShared(t)) {
+                    warnings.push(sharedNameWarning("transforms", t.name));
+                }
+                if (!t.importTable) {
+                    warnings.push("The transform has no default import table: it was never set, or the table was deleted.");
+                }
+                if (!t.targetTable) {
+                    warnings.push("The transform's target table no longer exists. Fix the transform in Servicely.");
+                }
+                return warnings;
+            }
+
+            function showDetail(t) {
+                currentDetail = t;
+                let panel = $("#node-input-transform-detail").empty();
+                if (!t) {
+                    panel.hide();
+                    return;
+                }
+
+                panel.append(saved.source());
+                let warnings = warningsFor(t);
+                if (warnings.length) {
+                    panel.append(E.warningList(warnings));
+                }
+
+                // The transform runs against the import table sent, never its default, whose fields its mappings read
+                let table = ($("#node-input-import_table").val() || "").trim();
+                let text = null;
+                if (!table) {
+                    text = "Import table is blank, so it must come from msg.import_table, which an Import node before this one sets. Runs fail without it: the instance doesn't fall back to the transform's default" +
+                        (t.importTable ? " ('" + t.importTable + "')." : ".");
+                } else if (t.importTable && table !== t.importTable && !E.hasPlaceholder(table)) {
+                    text = "The node runs this transform against the import table '" + table + "', but its default is '" + t.importTable + "', whose fields the mappings read.";
+                }
+                if (text) {
+                    // Blank is the usual setup after an Import node, so it is a note rather than a warning
+                    panel.append(table ? E.warningList([text]) : $("<div>").addClass("servicely-source").text(text));
+                }
+                if (text && t.importTable) {
+                    let use = E.button("fa-magic", "Use '" + t.importTable + "'", "Set Import table to the transform's default import table");
+                    use.on("click", function () {
+                        $("#node-input-import_table").val(t.importTable).trigger("change");
+                    });
+                    panel.append($("<div>").addClass("servicely-actions").append(use));
+                }
+
+                let summary = $("<table>").addClass("servicely-table");
+                summary.append(E.row("Name", t.name));
+                if (t.description && t.description !== t.name) {
+                    summary.append(E.row("Description", t.description));
+                }
+                summary.append(
+                    E.row("Default import table", t.importTable),
+                    E.row("Target table", t.targetTable),
+                    E.row("Next transform", t.nextTransform),
+                    E.row("Load options", Object.keys(LOAD_OPTIONS).filter(k => t[k] === true).map(k => LOAD_OPTIONS[k]).join(", ")),
+                    E.row("Scripts", [t.hasPreProcessScript ? "pre-process" : null, t.hasPostProcessScript ? "post-process" : null].filter(Boolean).join(", ")),
+                    E.row("Last changed", t.updatedOn ? E.formatDate(t.updatedOn) : "")
+                );
+                panel.append(summary);
+
+                let mappings = E.mappingsSection(t.mappings);
+                if (mappings) {
+                    panel.append(mappings.heading, mappings.table, E.samplePayloadButton(mappings.sourceFields, true));
+                }
+                panel.show();
+            }
+
+            dialog.testAuth("transform-auth-test", () => ({
+                import_table: literal($("#node-input-import_table").val()),
+                transform_name: literal($("#node-input-transform_name").val())
+            }), describeCheck, ["import_table", "transform_name"]);
+
+            $("#node-input-transform-refresh").on("click", loadList);
+            $("#node-input-transform-select").on("change", function () {
+                let t = transforms[Number($(this).val())];
+                if ($(this).val() !== "" && t) {
+                    $("#node-input-transform_name").val(t.name);
+                    loadDetail(t.id || t.name);
+                }
+            });
+            $("#node-input-transform_name").on("change", function () {
+                let value = literal($(this).val());
+                if (listedMoreThanOnce(transforms, value)) {
+                    dialog.setMessage(sharedNameWarning("transforms", value) + " Choose one to see its details.", true);
+                } else if (transforms.length) {
+                    loadDetail(detailRef(transforms, value));
+                } else if (!E.matchesName($(this).val(), currentDetail)) {
+                    showDetail(saved.saved());
+                }
+            });
+            // Re-checks the import table warning
+            $("#node-input-import_table").on("change", () => showDetail(currentDetail));
+
+            showDetail(saved.saved());
+        }
+
+        /**
+         * Registers a node that executes an ImportManager import.
+         */
+        RED.nodes.registerType('servicely-import', {
+            category: 'servicely-rest',
+            color: '#62f518',
+            defaults: Object.assign({
+                name: { value: null },
+                connection: { value: "", type: "servicely-connection", required: false },
+                import_name: { value: null, required: false },
+                import_table: { value: null, required: false },
+                // Passed on as msg.transform_name, for a Transform node after this one
+                transform_name: { value: "", required: false },
+                input_property: { value: "payload", required: false, validate: E.validateProperty("Data prop.") },
+                output_property: { value: "import_result", required: false, validate: E.validateProperty("Result prop.") },
+                // The import table's and import source's details as last retrieved from the instance
+                // ({retrievedAt, data}), kept as documentation. They contain no secrets or scripts.
+                import_info: { value: null },
+                import_source_info: { value: null }
+            }, E.authDefaults()),
+            credentials: E.authCredentials(),
+            inputs: 1,
+            outputs: 1,
+            paletteLabel: 'Import',
+            icon: "servicely-image-nodered.png",
+            label: function () {
+                return this.name || this.import_table || "Import";
+            },
+            oneditprepare: importEditPrepare,
+            oneditsave: function () {
+                // Details of a different import table or source than the one now entered are dropped
+                let table = $("#node-input-import_table").val();
+                let source = $("#node-input-import_name").val();
+                this.import_info = E.snapshotToSave("#node-input-import-detail", t => E.matchesName(table, t));
+                this.import_source_info = E.snapshotToSave("#node-input-import-source-detail", s => E.matchesName(source, s));
+            }
+        });
+
+        function importEditPrepare() {
+            const node = this;
+            let tables = [];
+            let sources = [];
+            let currentDetail = null;
+            const saved = E.snapshot("#node-input-import-detail", node.import_info, t => E.matchesName($("#node-input-import_table").val(), t));
+            const savedSource = E.snapshot("#node-input-import-source-detail", node.import_source_info, s => E.matchesName($("#node-input-import_name").val(), s));
+            const dialog = E.dialog(node);
+
+            function loadList() {
+                dialog.setMessage("Loading…");
+                dialog.discover("import-tables", "import tables", function (body) {
+                    tables = Array.isArray(body.data) ? body.data : [];
+                    let select = $("#node-input-import-select").empty();
+                    select.append($("<option>").val("").text(tables.length ? "Choose an import table…" : "No import tables found"));
+                    tables.forEach(function (t, index) {
+                        let label = t.name + (t.transformCount != null ? " (" + t.transformCount + " transform" + (t.transformCount === 1 ? "" : "s") + ")" : "");
+                        select.append($("<option>").val(String(index)).text(optionLabel(t, label)));
+                    });
+                    $(".node-input-import-select-row").show();
+                    dialog.setMessage("");
+
+                    let current = literal($("#node-input-import_table").val());
+                    let t = selectEntered(select, tables, current,
+                        () => dialog.setMessage(sharedNameWarning("import tables", current) + " Choose one to see its details.", true));
+                    if (t) {
+                        loadDetail(t.id || t.name, false);
+                    }
+                });
+            }
+
+            /** Loads an import table's details. `picked`: the user has just chosen this table. */
+            function loadDetail(ref, picked) {
+                ref = literal(ref);
+                if (!ref) {
+                    showDetail(null);
+                    return;
+                }
+                if (ref.indexOf("/") >= 0 && !tables.length) {
+                    // Only the id can be looked up: find it in the list first
+                    loadList();
+                    return;
+                }
+                dialog.discover("import-tables/" + encodeURIComponent(ref), "import tables", function (body) {
+                    dialog.setMessage("");
+                    if (body.data) {
+                        saved.keep(body.data);
+                    }
+                    showDetail(body.data || null);
+                    if (body.data) {
+                        useOnlyTransform(body.data, picked);
+                    }
+                });
+            }
+
+            function tableTransforms(t) {
+                return (t && Array.isArray(t.transforms)) ? t.transforms : [];
+            }
+
+            /**
+             * Fills in Transform when the table has only one transform: when Transform is blank, or when the
+             * user has just chosen the table. Only retrieved details do this, so opening the dialog changes nothing.
+             */
+            function useOnlyTransform(t, picked) {
+                let list = tableTransforms(t);
+                let current = ($("#node-input-transform_name").val() || "").trim();
+                if (list.length !== 1 || !list[0].name || current === list[0].name || (current && !picked)) {
+                    return;
+                }
+                $("#node-input-transform_name").val(list[0].name).trigger("change");
+                dialog.setMessage("Transform set to '" + list[0].name + "', the only transform that uses this import table by default.");
+            }
+
+            /** The Transform picker lists the table's transforms. */
+            function showTransformChoices(t) {
+                let list = tableTransforms(t);
+                let select = $("#node-input-import-transform-select").empty();
+                if (!list.length) {
+                    $(".node-input-import-transform-select-row").hide();
+                    return;
+                }
+                select.append($("<option>").val("").text("Choose one of this table's transforms…"));
+                list.forEach((x, index) => select.append($("<option>").val(String(index)).text(optionLabel(x, x.name + " (→ " + (x.targetTable || "?") + ")"))));
+                let current = ($("#node-input-transform_name").val() || "").trim();
+                let index = list.findIndex(x => x.name === current);
+                select.val(index >= 0 ? String(index) : "");
+                $(".node-input-import-transform-select-row").show();
+            }
+
+            function showDetail(t) {
+                currentDetail = t;
+                showTransformChoices(t);
+                let panel = $("#node-input-import-detail").empty();
+                if (!t) {
+                    panel.hide();
+                    return;
+                }
+
+                panel.append(saved.source());
+                let warnings = [];
+                if (isShared(t)) {
+                    warnings.push(sharedNameWarning("import tables", t.name));
+                }
+                let transform = literal($("#node-input-transform_name").val());
+                let chosen = tableTransforms(t).find(x => x.name === transform);
+                if (transform && Array.isArray(t.transforms) && !chosen) {
+                    warnings.push("The transform '" + transform + "' doesn't use this import table by default, so its mappings may not match these fields.");
+                }
+                if (isShared(chosen)) {
+                    warnings.push(sharedNameWarning("transforms", chosen.name));
+                }
+                if (warnings.length) {
+                    panel.append(E.warningList(warnings));
+                }
+
+                let summary = $("<table>").addClass("servicely-table");
+                summary.append(E.row("Name", t.name));
+                if (t.description && t.description !== t.name) {
+                    summary.append(E.row("Description", t.description));
+                }
+                summary.append(E.row("Last changed", t.updatedOn ? E.formatDate(t.updatedOn) : ""));
+                panel.append(summary);
+
+                let fields = (Array.isArray(t.fields) ? t.fields : []).map(f => f && f.name).filter(Boolean);
+                if (fields.length) {
+                    panel.append($("<div>").addClass("servicely-heading").text("Fields"));
+                    if (t.fieldsFromConfiguration) {
+                        panel.append($("<div>").addClass("servicely-source").text("From the table's configuration: no staging table has been generated yet."));
+                    }
+                    panel.append($("<div>").addClass("servicely-actions").text(fields.join(", ")));
+                }
+
+                let transforms = Array.isArray(t.transforms) ? t.transforms : [];
+                if (transforms.length) {
+                    panel.append($("<div>").addClass("servicely-heading").text("Transforms"),
+                        E.table(["Name", "Target table"], transforms.map(x => [optionLabel(x, x.name), x.targetTable || "-"])));
+                } else if (Array.isArray(t.transforms)) {
+                    panel.append($("<div>").addClass("servicely-source").text("No transform has this import table as its default."));
+                }
+                if (fields.length) {
+                    panel.append(E.samplePayloadButton(fields, true));
+                }
+                panel.show();
+            }
+
+            function loadSources() {
+                dialog.setMessage("Loading…");
+                dialog.discover("import-sources", "import sources", function (body) {
+                    sources = Array.isArray(body.data) ? body.data : [];
+                    let select = $("#node-input-import-source-select").empty();
+                    select.append($("<option>").val("").text(sources.length ? "Choose an import source…" : "No import sources found"));
+                    sources.forEach(function (s, index) {
+                        let label = s.name + " (" + (SOURCE_TYPES[s.type] || s.type || "?") + ")";
+                        select.append($("<option>").val(String(index)).text(optionLabel(s, label)));
+                    });
+                    $(".node-input-import-source-select-row").show();
+                    dialog.setMessage("");
+
+                    let current = literal($("#node-input-import_name").val());
+                    let s = selectEntered(select, sources, current,
+                        () => dialog.setMessage(sharedNameWarning("import sources", current) + " Choose one to see its details.", true));
+                    if (s) {
+                        savedSource.keep(s);
+                    }
+                    showSource(s);
+                });
+            }
+
+            function showSource(s) {
+                let panel = $("#node-input-import-source-detail").empty();
+                if (!s) {
+                    panel.hide();
+                    return;
+                }
+                panel.append(savedSource.source());
+                let warnings = [];
+                if (isShared(s)) {
+                    warnings.push(sharedNameWarning("import sources", s.name));
+                }
+                if (s.type && s.type !== "inbound") {
+                    // Only inbound sources take the posted rows; the others run their own fetch
+                    warnings.push("This source's type is " + (SOURCE_TYPES[s.type] || s.type) + ", so the import runs the source's own fetch and ignores the node's rows." +
+                        " Choose an Inbound source, or leave Import source blank, to import the rows.");
+                }
+                if (warnings.length) {
+                    panel.append(E.warningList(warnings));
+                }
+                let summary = $("<table>").addClass("servicely-table");
+                summary.append(E.row("Type", SOURCE_TYPES[s.type] || s.type));
+                if (s.description && s.description !== s.name) {
+                    summary.append(E.row("Description", s.description));
+                }
+                summary.append(E.row("Inbound script", s.hasInboundProcessingScript ? "Runs on every import" : "None"));
+                panel.append(summary).show();
+            }
+
+            dialog.testAuth("import-auth-test", () => ({
+                import_table: literal($("#node-input-import_table").val()),
+                transform_name: literal($("#node-input-transform_name").val())
+            }), describeCheck, ["import_table", "transform_name"]);
+
+            $("#node-input-import-transform-select").on("change", function () {
+                let x = tableTransforms(currentDetail)[Number($(this).val())];
+                if ($(this).val() !== "" && x) {
+                    $("#node-input-transform_name").val(x.name).trigger("change");
+                }
+            });
+            $("#node-input-transform_name").on("change", () => showDetail(currentDetail));
+
+            $("#node-input-import-refresh").on("click", loadList);
+            $("#node-input-import-select").on("change", function () {
+                let t = tables[Number($(this).val())];
+                if ($(this).val() !== "" && t) {
+                    $("#node-input-import_table").val(t.name);
+                    loadDetail(t.id || t.name, true);
+                }
+            });
+            $("#node-input-import_table").on("change", function () {
+                let value = literal($(this).val());
+                if (listedMoreThanOnce(tables, value)) {
+                    dialog.setMessage(sharedNameWarning("import tables", value) + " Choose one to see its details.", true);
+                } else if (tables.length) {
+                    loadDetail(detailRef(tables, value), true);
+                } else if (!E.matchesName($(this).val(), currentDetail)) {
+                    showDetail(saved.saved());
+                }
+            });
+
+            $("#node-input-import-source-refresh").on("click", loadSources);
+            $("#node-input-import-source-select").on("change", function () {
+                let s = sources[Number($(this).val())];
+                if ($(this).val() !== "" && s) {
+                    $("#node-input-import_name").val(s.name);
+                    savedSource.keep(s);
+                    showSource(s);
+                }
+            });
+            $("#node-input-import_name").on("change", function () {
+                let value = literal($(this).val());
+                let matches = sources.filter(s => E.matchesName(value, s));
+                if (matches.length === 1) {
+                    savedSource.keep(matches[0]);
+                    showSource(matches[0]);
+                } else {
+                    showSource(sources.length ? null : savedSource.saved());
+                }
+            });
+
+            showDetail(saved.saved());
+            showSource(savedSource.saved());
+        }
+    })();
 </script>
 
 <script type="text/html" data-template-name="servicely-rest">
@@ -78,6 +609,7 @@
     <div class="form-row">
         <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
         <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+        <div class="servicely-hint">Blank: <code>msg._connectionNode</code>, set by a Queue or Connector node.</div>
     </div>
 
     <div class="form-row">
@@ -89,21 +621,25 @@
             <option value="PUT">PUT</option>
             <option value="DELETE">DELETE</option>
         </select>
+        <div class="servicely-hint">Only POST, PATCH and PUT send a body.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-uri"><i class="fa fa-link"></i> URI</label>
         <input type="text" id="node-input-uri" placeholder="/v1/Incident/${msg.id}">
+        <div class="servicely-hint">Relative to the connection's base URL. <code>${msg.x}</code> values are URL-encoded.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-input_property"><i class="fa fa-sign-in"></i> Input prop.</label>
         <input type="text" id="node-input-input_property" placeholder="payload">
+        <div class="servicely-hint">The message property sent as the JSON body.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Output prop.</label>
         <input type="text" id="node-input-output_property" placeholder="payload">
+        <div class="servicely-hint">Where the response is written.</div>
     </div>
 
     <div class="form-row">
@@ -113,6 +649,7 @@
             <option value="data">The response's "data" field</option>
             <option value="body">The whole response body</option>
         </select>
+        <div class="servicely-hint">Automatic: the response's <code>data</code> field when it has one, otherwise the whole body.</div>
     </div>
 
     <hr />
@@ -127,22 +664,73 @@
     <div class="form-row">
         <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
         <input type="text" id="node-input-connection" placeholder="From msg._connectionNode if not set">
+        <div class="servicely-hint">Blank: <code>msg._connectionNode</code>, set by a Queue or Connector node.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-import_table"><i class="fa fa-table"></i> Import table</label>
-        <input type="text" id="node-input-import_table" placeholder="From message if left blank">
+        <input type="text" id="node-input-import_table" placeholder="From msg.import_table">
+        <div class="servicely-hint">The rows to transform. Blank: <code>msg.import_table</code>, set by an Import node.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-transform_name"><i class="fa fa-random"></i> Import transform</label>
-        <input type="text" id="node-input-transform_name" placeholder="From message if left blank">
+        <input type="text" id="node-input-transform_name" placeholder="From msg.transform_name" style="width: calc(70% - 40px)">
+        <button type="button" id="node-input-transform-refresh" class="red-ui-button" title="Look up import transforms on the instance"><i class="fa fa-refresh"></i></button>
+        <div class="servicely-hint">What to do with them: the mappings and target table. Blank: <code>msg.transform_name</code>, set by an Import node.</div>
     </div>
+
+    <div class="form-row node-input-transform-select-row" style="display: none">
+        <label for="node-input-transform-select">&nbsp;</label>
+        <select id="node-input-transform-select" style="width: 70%"></select>
+    </div>
+
+    <div class="form-row servicely-message" id="node-input-servicely-message" style="display: none"></div>
+    <div id="node-input-transform-detail" class="servicely-detail" style="display: none"></div>
 
     <div class="form-row">
         <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Result prop.</label>
         <input type="text" id="node-input-output_property" placeholder="transform_result">
+        <div class="servicely-hint">Where the instance's result is written. <code>msg.payload</code> is left as it is.</div>
     </div>
+
+    <div class="form-row">
+        <label for="node-input-authmode"><i class="fa fa-lock"></i> Auth</label>
+        <input type="text" id="node-input-authmode" style="width: calc(70% - 90px)">
+        <button type="button" id="node-input-servicely-test" class="red-ui-button" title="Check these credentials, and what they may do, without importing or transforming anything"><i class="fa fa-plug"></i> Test auth</button>
+        <div class="servicely-hint">The connection's, or this node's own token, e.g. one limited to <code>/controller/ImportManager</code>.</div>
+    </div>
+
+    <div class="form-row servicely-auth-token-row">
+        <label for="node-input-apiToken"><i class="fa fa-key"></i> Token</label>
+        <input type="password" id="node-input-apiToken" style="width: 70%">
+        <div class="servicely-hint">The System API Token this node signs in with.</div>
+    </div>
+
+    <div class="form-row servicely-auth-secret-row">
+        <label for="node-input-apiSecret"><i class="fa fa-user-secret"></i> Secret</label>
+        <input type="password" id="node-input-apiSecret" style="width: 70%">
+        <div class="servicely-hint">The token's secret, used to sign each request.</div>
+    </div>
+
+    <div class="form-row servicely-auth-hash-row">
+        <label for="node-input-hash_method"><i class="fa fa-hashtag"></i> Hash</label>
+        <select id="node-input-hash_method" style="width: 70%">
+            <option value="sha256">SHA-256</option>
+            <option value="sha1">SHA-1</option>
+            <option value="md5">MD5</option>
+            <option value="sha512">SHA-512</option>
+        </select>
+        <div class="servicely-hint">Must match the token's Hash Method in Servicely.</div>
+    </div>
+
+    <div class="form-row servicely-auth-signed-row">
+        <label for="node-input-signed_headers"><i class="fa fa-list"></i> Signed headers</label>
+        <input type="text" id="node-input-signed_headers" placeholder="Date" style="width: 70%">
+        <div class="servicely-hint">The token's Header Key: the headers it signs, comma-separated. Values other than <code>Date</code> come from <code>msg.headers</code>.</div>
+    </div>
+
+    <div class="form-row servicely-message" id="node-input-servicely-test-result" style="display: none"></div>
 
     <hr />
 
@@ -156,27 +744,98 @@
     <div class="form-row">
         <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
         <input type="text" id="node-input-connection" placeholder="From msg._connectionNode if not set">
+        <div class="servicely-hint">Blank: <code>msg._connectionNode</code>, set by a Queue or Connector node.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-import_name"><i class="fa fa-file-code-o"></i> Import source</label>
-        <input type="text" id="node-input-import_name" placeholder="From message if left blank">
+        <input type="text" id="node-input-import_name" placeholder="Optional" style="width: calc(70% - 40px)">
+        <button type="button" id="node-input-import-source-refresh" class="red-ui-button" title="Look up import sources on the instance"><i class="fa fa-refresh"></i></button>
+        <div class="servicely-hint">Optional. Blank loads the rows as they are. An Inbound source also runs its script. Other types run their own fetch and ignore the rows.</div>
     </div>
+
+    <div class="form-row node-input-import-source-select-row" style="display: none">
+        <label for="node-input-import-source-select">&nbsp;</label>
+        <select id="node-input-import-source-select" style="width: 70%"></select>
+    </div>
+
+    <div id="node-input-import-source-detail" class="servicely-detail" style="display: none"></div>
 
     <div class="form-row">
         <label for="node-input-import_table"><i class="fa fa-table"></i> Import table</label>
-        <input type="text" id="node-input-import_table" placeholder="From message if left blank">
+        <input type="text" id="node-input-import_table" placeholder="Blank: msg.import_table" style="width: calc(70% - 40px)">
+        <button type="button" id="node-input-import-refresh" class="red-ui-button" title="Look up import tables on the instance"><i class="fa fa-refresh"></i></button>
+        <div class="servicely-hint">The table the rows are loaded into. Blank: <code>msg.import_table</code>. Passed on to a Transform node.</div>
+    </div>
+
+    <div class="form-row node-input-import-select-row" style="display: none">
+        <label for="node-input-import-select">&nbsp;</label>
+        <select id="node-input-import-select" style="width: 70%"></select>
+    </div>
+
+    <div class="form-row servicely-message" id="node-input-servicely-message" style="display: none"></div>
+    <div id="node-input-import-detail" class="servicely-detail" style="display: none"></div>
+
+    <div class="form-row">
+        <label for="node-input-transform_name"><i class="fa fa-random"></i> Transform</label>
+        <input type="text" id="node-input-transform_name" placeholder="Optional: for a Transform node after this one">
+        <div class="servicely-hint">Optional. Passed on as <code>msg.transform_name</code>, so a Transform node after this one needs no settings. Filled in when the table has only one transform.</div>
+    </div>
+
+    <div class="form-row node-input-import-transform-select-row" style="display: none">
+        <label for="node-input-import-transform-select">&nbsp;</label>
+        <select id="node-input-import-transform-select" style="width: 70%"></select>
     </div>
 
     <div class="form-row">
         <label for="node-input-input_property"><i class="fa fa-sign-in"></i> Data prop.</label>
         <input type="text" id="node-input-input_property" placeholder="payload">
+        <div class="servicely-hint">The rows: an array of objects keyed by the table's field names.</div>
     </div>
 
     <div class="form-row">
         <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Result prop.</label>
         <input type="text" id="node-input-output_property" placeholder="import_result">
+        <div class="servicely-hint">Where the instance's result is written. <code>msg.payload</code> is left as it is.</div>
     </div>
+
+    <div class="form-row">
+        <label for="node-input-authmode"><i class="fa fa-lock"></i> Auth</label>
+        <input type="text" id="node-input-authmode" style="width: calc(70% - 90px)">
+        <button type="button" id="node-input-servicely-test" class="red-ui-button" title="Check these credentials, and what they may do, without importing or transforming anything"><i class="fa fa-plug"></i> Test auth</button>
+        <div class="servicely-hint">The connection's, or this node's own token, e.g. one limited to <code>/controller/ImportManager</code>.</div>
+    </div>
+
+    <div class="form-row servicely-auth-token-row">
+        <label for="node-input-apiToken"><i class="fa fa-key"></i> Token</label>
+        <input type="password" id="node-input-apiToken" style="width: 70%">
+        <div class="servicely-hint">The System API Token this node signs in with.</div>
+    </div>
+
+    <div class="form-row servicely-auth-secret-row">
+        <label for="node-input-apiSecret"><i class="fa fa-user-secret"></i> Secret</label>
+        <input type="password" id="node-input-apiSecret" style="width: 70%">
+        <div class="servicely-hint">The token's secret, used to sign each request.</div>
+    </div>
+
+    <div class="form-row servicely-auth-hash-row">
+        <label for="node-input-hash_method"><i class="fa fa-hashtag"></i> Hash</label>
+        <select id="node-input-hash_method" style="width: 70%">
+            <option value="sha256">SHA-256</option>
+            <option value="sha1">SHA-1</option>
+            <option value="md5">MD5</option>
+            <option value="sha512">SHA-512</option>
+        </select>
+        <div class="servicely-hint">Must match the token's Hash Method in Servicely.</div>
+    </div>
+
+    <div class="form-row servicely-auth-signed-row">
+        <label for="node-input-signed_headers"><i class="fa fa-list"></i> Signed headers</label>
+        <input type="text" id="node-input-signed_headers" placeholder="Date" style="width: 70%">
+        <div class="servicely-hint">The token's Header Key: the headers it signs, comma-separated. Values other than <code>Date</code> come from <code>msg.headers</code>.</div>
+    </div>
+
+    <div class="form-row servicely-message" id="node-input-servicely-test-result" style="display: none"></div>
 
     <hr />
 
@@ -187,54 +846,113 @@
 </script>
 
 <script type="text/html" data-help-name="servicely-rest">
-    <p>Calls the Servicely REST API, or an Inbound Webhook.</p>
+    <p>Calls the Servicely REST API (or any other path on the instance) and returns the response.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Connection</dt>
+        <dd>The instance to call, and how to sign in. When blank, <code>msg._connectionNode</code> is used.</dd>
+        <dt>Method</dt>
+        <dd><code>GET</code>, <code>POST</code>, <code>PATCH</code>, <code>PUT</code> or <code>DELETE</code>. Only
+            POST, PATCH and PUT send a body.</dd>
+        <dt>URI <span class="property-type">string</span></dt>
+        <dd>The path, relative to the connection's base URL, e.g. <code>/v1/Incident</code>. It can include
+            message properties, which are URL-encoded: <code>/v1/Incident/${msg.payload.id}</code> (or
+            <code>&lt;%= msg.payload.id %&gt;</code>). Only plain properties are allowed, not expressions.</dd>
+        <dt>Input prop. <span class="property-type">string</span></dt>
+        <dd>The message property sent as the JSON body. Default <code>payload</code>.</dd>
+        <dt>Output prop. <span class="property-type">string</span></dt>
+        <dd>The message property the response is written to. Default <code>payload</code>.</dd>
+        <dt>Output</dt>
+        <dd>What is written to the output property:
+            <ul>
+                <li><b>Automatic</b> (default): the response's <code>data</code> field when it has one, as REST API
+                    responses do; otherwise the whole body.</li>
+                <li><b>"data" field</b>: always the <code>data</code> field.</li>
+                <li><b>Whole response body</b>: the body as returned, e.g. to read paging information next to
+                    <code>data</code>.</li>
+            </ul>
+        </dd>
+    </dl>
 
     <h3>Inputs</h3>
     <dl class="message-properties">
-        <dt>payload <span class="property-type">object</span></dt>
-        <dd>The request body for POST, PUT and PATCH, read from the <i>Input prop.</i> property.</dd>
+        <dt class="optional">payload <span class="property-type">object | array</span></dt>
+        <dd>The request body for POST, PATCH and PUT, read from the <i>Input prop.</i> property.</dd>
         <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
         <dd>The connection to use when none is configured on the node.</dd>
     </dl>
 
     <h3>Outputs</h3>
     <dl class="message-properties">
-        <dt>payload <span class="property-type">object</span></dt>
-        <dd>The response, written to the <i>Output prop.</i> property.</dd>
+        <dt>payload <span class="property-type">object | array | string</span></dt>
+        <dd>The response, written to the <i>Output prop.</i> property. JSON responses are parsed; others are
+            returned as text.</dd>
         <dt>statusCode <span class="property-type">number</span></dt>
         <dd>The HTTP status of the response.</dd>
     </dl>
+    <p>The rest of the message is passed on unchanged.</p>
 
     <h3>Details</h3>
-    <p>The URI is relative to the connection's base URL, e.g. <code>/v1/Incident</code> or
-        <code>/_webhook/v2/my_webhook</code>. It can include message properties, which are URL-encoded:
-        <code>/v1/Incident/${msg.payload.id}</code>.</p>
-    <p><b>Output</b> controls what is written to the output property:</p>
-    <ul>
-        <li><b>Automatic</b>: the response's <code>data</code> field when it has one (REST API), otherwise the
-            whole body (Inbound Webhooks).</li>
-        <li><b>"data" field</b>: always the <code>data</code> field.</li>
-        <li><b>Whole response body</b>: the body as returned.</li>
-    </ul>
+    <p>The request uses the connection's authentication, and the call times out after 30 seconds. To call an
+        Inbound Webhook, use the <b>Webhook</b> node instead: it understands webhook tokens, responses and errors.</p>
     <p>Errors, including HTTP error responses, can be handled with a <b>Catch</b> node. The message has
-        <code>msg.error</code>, <code>msg.statusCode</code> and the error text in <code>msg.payload</code>.</p>
+        <code>msg.error</code>, <code>msg.statusCode</code> and the error text in <code>msg.payload</code>, including
+        the instance's <code>_error</code> and <code>_errorId</code> when it returns them.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-import">
-    <p>Loads data into a Servicely Import Table. The data can then be processed with the <b>Transform</b> node.</p>
+    <p>Loads rows into a Servicely import table (a staging table), through <code>/controller/ImportManager</code>. To
+        create or update records from them, run a <b>Transform</b> node after it: an import never transforms its
+        rows by itself.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Connection</dt>
+        <dd>The instance to import into. When blank, <code>msg._connectionNode</code> is used.</dd>
+        <dt>Import source <span class="property-type">string</span></dt>
+        <dd>Optional. The import source record the import runs as, which changes what is loaded (see
+            <i>Import sources</i>). When blank, <code>msg.import_name</code> is used, and when that is blank too, the
+            rows are loaded as they are.</dd>
+        <dt>Import table <span class="property-type">string</span></dt>
+        <dd>The import table the rows are loaded into. When blank, <code>msg.import_table</code> is used.</dd>
+        <dt>Transform <span class="property-type">string</span></dt>
+        <dd>Optional. The transform for a <b>Transform</b> node after this one to run; this node doesn't run it.
+            It is passed on as <code>msg.transform_name</code>, so the Transform node can be left with no settings.
+            Choosing an import table with only one transform fills it in, and the list under it offers the table's
+            transforms.</dd>
+        <dt>Data prop. <span class="property-type">string</span></dt>
+        <dd>The message property holding the rows. Default <code>payload</code>.</dd>
+        <dt>Result prop. <span class="property-type">string</span></dt>
+        <dd>The message property the result is written to. Default <code>import_result</code>.</dd>
+        <dt>Auth</dt>
+        <dd>The connection's authentication, or this node's own API token (see <i>Token override</i>).</dd>
+        <dt>Token, Secret <span class="property-type">credentials</span></dt>
+        <dd>The override's System API Token, and its secret for HMAC.</dd>
+        <dt>Hash</dt>
+        <dd>HMAC only: the token's Hash Method (SHA-256 by default).</dd>
+        <dt>Signed headers <span class="property-type">string</span></dt>
+        <dd>HMAC Header only: the headers the token signs, comma-separated, usually just <code>Date</code>.</dd>
+    </dl>
 
     <h3>Inputs</h3>
     <dl class="message-properties">
         <dt>payload <span class="property-type">array | object</span></dt>
-        <dd>The rows to import, read from the <i>Data prop.</i> property.</dd>
-        <dt class="optional">import_name <span class="property-type">string</span></dt>
-        <dd>The import source, when not configured on the node.</dd>
+        <dd>The rows to import, read from the <i>Data prop.</i> property: an array of objects, one per row, whose
+            keys are the import table's field names, e.g. <code>[{"AlertId": "A1", "Severity": "High"}]</code>. A
+            single object is imported as one row.</dd>
         <dt class="optional">import_table <span class="property-type">string</span></dt>
         <dd>The import table, when not configured on the node.</dd>
+        <dt class="optional">import_name <span class="property-type">string</span></dt>
+        <dd>The import source, when not configured on the node.</dd>
         <dt class="optional">import_metadata <span class="property-type">object</span></dt>
-        <dd>Extra metadata sent with the import, in addition to <code>lastImportTimestamp</code>.</dd>
+        <dd>Extra fields for an Inbound source's processing script, which reads them as <code>metadata</code>. The
+            node always adds <code>lastImportTimestamp</code> (the time, in milliseconds). Nothing else reads them.</dd>
+        <dt class="optional">headers <span class="property-type">object</span></dt>
+        <dd>Values of HMAC signed headers other than <code>Date</code>, when the token override signs them. Only
+            those headers are sent.</dd>
         <dt class="optional">import_enabled <span class="property-type">boolean</span></dt>
-        <dd>Set to <code>false</code> to pass the message through without importing.</dd>
+        <dd>Set to <code>false</code> to pass the message on without importing.</dd>
         <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
         <dd>The connection to use when none is configured on the node.</dd>
     </dl>
@@ -242,21 +960,126 @@
     <h3>Outputs</h3>
     <dl class="message-properties">
         <dt>import_result <span class="property-type">object</span></dt>
-        <dd>The import result, written to the <i>Result prop.</i> property. <code>msg.payload</code> is left unchanged.</dd>
+        <dd>The instance's result, written to the <i>Result prop.</i> property:
+            <ul>
+                <li><code>success</code>: <code>true</code> (a failed import goes to Catch instead);</li>
+                <li><code>importTable</code>: the import table record;</li>
+                <li><code>importLog</code>: the import log record, e.g. its <code>Number</code>
+                    (<code>IMPLOG…</code>), <code>State</code> (<code>loaded</code>) and <code>Log</code> (HTML);</li>
+                <li><code>importSource</code>: the import source record, or <code>null</code>.</li>
+            </ul>
+        </dd>
+        <dt>import_table <span class="property-type">string</span></dt>
+        <dd>The import table used, so a <b>Transform</b> node after this one can leave its <i>Import table</i>
+            blank.</dd>
+        <dt>transform_name <span class="property-type">string</span></dt>
+        <dd>The node's <i>Transform</i>, when it is set, for the <b>Transform</b> node after this one.</dd>
+        <dt>statusCode <span class="property-type">number</span></dt>
+        <dd>The HTTP status of the response.</dd>
     </dl>
+    <p><code>msg.payload</code> and the rest of the message are passed on unchanged.</p>
+
+    <h3>Import sources</h3>
+    <p>What is loaded depends on <i>Import source</i>:</p>
+    <ul>
+        <li><b>Blank</b>: the rows, straight into the import table.</li>
+        <li><b>An Inbound source</b>: the rows, then the source's inbound processing script, if it has one. The script
+            can read <code>msg.import_metadata</code>.</li>
+        <li><b>Any other type</b> (Attachment, File, JDBC, LDAP, SOAP, REST): the source's own fetch, run on the
+            instance. The node's rows are ignored, and the dialog warns about it.</li>
+    </ul>
+    <p>An unknown source makes the import fail.</p>
+
+    <h3>Import, then transform</h3>
+    <p>To configure both steps here, set <i>Import table</i> and <i>Transform</i> on this node and wire a
+        <b>Transform</b> node with no settings after it. It transforms the table just imported into, using
+        <code>msg.import_table</code> and <code>msg.transform_name</code>. <i>Test auth</i> checks both names.</p>
+
+    <h3>Choosing a table and source</h3>
+    <p>Press <i class="fa fa-refresh"></i> next to <i>Import table</i> to choose one from the instance and see its
+        fields and the transforms that use it by default. <i>Copy sample payload</i> copies a JSON skeleton of a row.
+        The instance normalises row keys (<code>alert id</code> becomes <code>AlertId</code>), so the field names
+        shown are the reliable form. A key the table hasn't seen before is added as a new text field, so rows
+        aren't limited to these fields. Press <i class="fa fa-refresh"></i> next to <i>Import source</i> to choose
+        a source and see its type and whether it runs a script.</p>
+    <p>Import tables and sources are found by name across the whole instance, and a name used twice makes imports
+        fail. The lists mark such names <i>[name shared]</i>, and the node warns about them. Lookups use the
+        deployed connection. They need Servicely 1.11.122 or later; on an earlier version the dialog says so, and you type the names instead.</p>
+    <p>The details retrieved are saved with the node (<code>import_info</code>, <code>import_source_info</code>),
+        so they stay visible as documentation when the instance can't be reached: in this dialog, and under
+        <i>Show more</i> in the Info sidebar. They include the time they were retrieved, and are dropped when
+        <i>Import table</i> or <i>Import source</i> is changed. They contain no tokens, secrets or scripts, but they
+        are part of the flow and of any export of it. Press <i class="fa fa-refresh"></i> to update them.</p>
+
+    <h3>Token override</h3>
+    <p><b>Auth</b> uses the connection's authentication by default. Choose <i>Bearer Token</i>, <i>HMAC Header
+        Token</i> or <i>HMAC Body Token</i> to give this node its own System API Token (and secret for HMAC), e.g. a
+        token limited to <code>/controller/ImportManager</code>. <i>Hash</i> and <i>Signed headers</i> must match the
+        token's settings in Servicely. Signed headers other than <code>Date</code> are taken from
+        <code>msg.headers</code>. HMAC requests are rejected when the clock is more than 5 minutes out.</p>
+    <p><b>Test auth</b> checks the chosen credentials, including a token or secret typed but not yet deployed,
+        and whether the names entered exist, without importing or transforming anything. It also tells you which
+        name is wrong when a run fails with the instance's script error. It needs a deployed connection and
+        Servicely 1.11.122 or later.</p>
+
+    <h3>Servicely version</h3>
+    <p>The edit dialog's lookups (<i class="fa fa-refresh"></i>) and <i>Test auth</i> need Servicely 1.11.122 or
+        later. On an earlier version they show a note saying so, and the fields take typed values as usual: running
+        the node doesn't depend on them.</p>
+
+    <h3>Errors</h3>
+    <p>Errors go to a <b>Catch</b> node, with <code>msg.error</code>, <code>msg.statusCode</code> and the error text in
+        <code>msg.payload</code>:</p>
+    <ul>
+        <li><b>Import failed: …</b>: the instance couldn't load the rows (it answered <code>success: false</code>). The result is still in <code>msg.import_result</code>.</li>
+        <li><b>A 500 with a script error</b>: the instance couldn't find a name. It doesn't say which, so the node
+            suggests the likely names; <i>Test auth</i> tells you which one is wrong.</li>
+        <li><b>401</b>: the credentials were rejected.</li>
+    </ul>
+    <p>The node is marked as misconfigured when a token override is chosen without its token (or secret), or when
+        a property name is invalid.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-transform">
-    <p>Runs a Servicely import transform, moving rows from an Import Table into their destination tables.</p>
+    <p>Runs a Servicely import transform: it creates or updates records in the transform's target table from the
+        rows of an import table, through <code>/controller/ImportManager</code>. Use it after an <b>Import</b> node.
+        When the Import node sets its <i>Transform</i>, leave this node's settings blank: it runs that transform on
+        the table just imported into.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Connection</dt>
+        <dd>The instance to run on. When blank, <code>msg._connectionNode</code> is used.</dd>
+        <dt>Import table <span class="property-type">string</span></dt>
+        <dd>The import table whose rows are transformed. When blank, <code>msg.import_table</code> is used, which an
+            <b>Import</b> node earlier in the flow sets. One of them is required.</dd>
+        <dt>Import transform <span class="property-type">string</span></dt>
+        <dd>The transform to run: its field mappings, target table and load options. When blank,
+            <code>msg.transform_name</code> is used, which an <b>Import</b> node with a <i>Transform</i> sets. One of
+            them is required.</dd>
+        <dt>Result prop. <span class="property-type">string</span></dt>
+        <dd>The message property the result is written to. Default <code>transform_result</code>.</dd>
+        <dt>Auth</dt>
+        <dd>The connection's authentication, or this node's own API token (see <i>Token override</i>).</dd>
+        <dt>Token, Secret <span class="property-type">credentials</span></dt>
+        <dd>The override's System API Token, and its secret for HMAC.</dd>
+        <dt>Hash</dt>
+        <dd>HMAC only: the token's Hash Method (SHA-256 by default).</dd>
+        <dt>Signed headers <span class="property-type">string</span></dt>
+        <dd>HMAC Header only: the headers the token signs, comma-separated, usually just <code>Date</code>.</dd>
+    </dl>
 
     <h3>Inputs</h3>
     <dl class="message-properties">
-        <dt class="optional">transform_name <span class="property-type">string</span></dt>
-        <dd>The transform to run, when not configured on the node.</dd>
         <dt class="optional">import_table <span class="property-type">string</span></dt>
-        <dd>The import table, when not configured on the node.</dd>
+        <dd>The import table, when not configured on the node. Set by an <b>Import</b> node.</dd>
+        <dt class="optional">transform_name <span class="property-type">string</span></dt>
+        <dd>The transform, when not configured on the node. Set by an <b>Import</b> node with a <i>Transform</i>.</dd>
+        <dt class="optional">headers <span class="property-type">object</span></dt>
+        <dd>Values of HMAC signed headers other than <code>Date</code>, when the token override signs them. Only
+            those headers are sent.</dd>
         <dt class="optional">transform_enabled <span class="property-type">boolean</span></dt>
-        <dd>Set to <code>false</code> to pass the message through without transforming.</dd>
+        <dd>Set to <code>false</code> to pass the message on without transforming.</dd>
         <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
         <dd>The connection to use when none is configured on the node.</dd>
     </dl>
@@ -264,6 +1087,84 @@
     <h3>Outputs</h3>
     <dl class="message-properties">
         <dt>transform_result <span class="property-type">object</span></dt>
-        <dd>The transform result, written to the <i>Result prop.</i> property. <code>msg.payload</code> is left unchanged.</dd>
+        <dd>The instance's result, written to the <i>Result prop.</i> property:
+            <ul>
+                <li><code>success</code>: <code>true</code>, and <code>rowFailures</code>: <code>0</code> (failures go
+                    to Catch instead);</li>
+                <li><code>importLoad</code>: the load record, e.g. its <code>Number</code> (<code>IMPLOAD…</code>),
+                    <code>State</code> (<code>success</code>) and <code>Log</code> (HTML, with the number of rows
+                    processed);</li>
+                <li><code>importTransform</code>, <code>importTable</code>: the transform and import table records.</li>
+            </ul>
+            It doesn't list the records created or updated.</dd>
+        <dt>statusCode <span class="property-type">number</span></dt>
+        <dd>The HTTP status of the response.</dd>
     </dl>
+    <p><code>msg.payload</code> and the rest of the message are passed on unchanged.</p>
+
+    <h3>What it runs</h3>
+    <ul>
+        <li><b>Every pending row.</b> It processes everything imported into the import table and not yet
+            transformed, including rows from earlier imports that were never transformed. Each row processed is
+            marked as succeeded or failed, and isn't picked up again, so running the transform twice processes
+            nothing the second time. Failed rows aren't retried until someone resets them in Servicely. A transform
+            with <i>Reset processed records</i> puts its successful rows back to pending, so a chained transform
+            (<i>Next transform</i>) can process them too.</li>
+        <li><b>Create or update.</b> An inbound transform always creates or updates records in its target table,
+            matched on its primary-key mapping.</li>
+        <li><b>Before it answers.</b> The records are written, and their triggers run, before the node sends its
+            message. Work the instance queues afterwards, such as events, may finish later.</li>
+    </ul>
+
+    <h3>Why both names</h3>
+    <p><i>Import transform</i> says what to do with the rows, and <i>Import table</i> says which rows. A transform
+        has a default import table, but the instance doesn't use it: it runs the transform on the table it is sent,
+        and fails without one. So the node reports an error, without calling the instance, when either name is
+        missing from both the node and the message. After an <b>Import</b> node, leave <i>Import table</i> blank to
+        use the table just imported into, and <i>Import transform</i> blank when the Import node sets its
+        <i>Transform</i>. The dialog warns when <i>Import table</i> is
+        blank or isn't the transform's default, since the mappings read the default table's fields, and
+        <i>Use</i> fills it in.</p>
+
+    <h3>Choosing a transform</h3>
+    <p>Press <i class="fa fa-refresh"></i> to choose a transform from the instance (only those whose default import
+        table is <i>Import table</i>, when it is set) and see its target table, load options and field mappings.
+        <i>Copy sample payload</i> copies a JSON skeleton of an import row with the fields the mappings read, for the
+        <b>Import</b> node upstream.</p>
+    <p>Transforms are found by name across the whole instance, whatever the import table, and a name used twice
+        makes runs fail. The list marks such names <i>[name shared]</i>, and the node warns about them. Lookups use the
+        deployed connection. They need Servicely 1.11.122 or later; on an earlier version the dialog says so, and you type the name instead.</p>
+    <p>The details retrieved are saved with the node (<code>transform_info</code>), so they stay visible as
+        documentation when the instance can't be reached: in this dialog, and under <i>Show more</i> in the Info
+        sidebar. They include the time they were retrieved, and are dropped when <i>Import transform</i> is changed
+        to another transform. They contain no tokens, secrets or scripts, but they are part of the flow and of any
+        export of it. Press <i class="fa fa-refresh"></i> to update them.</p>
+
+    <h3>Token override</h3>
+    <p><b>Auth</b> uses the connection's authentication by default. Choose <i>Bearer Token</i>, <i>HMAC Header
+        Token</i> or <i>HMAC Body Token</i> to give this node its own System API Token (and secret for HMAC), e.g. a
+        token limited to <code>/controller/ImportManager</code>. <i>Hash</i> and <i>Signed headers</i> must match the
+        token's settings in Servicely. Signed headers other than <code>Date</code> are taken from
+        <code>msg.headers</code>. HMAC requests are rejected when the clock is more than 5 minutes out.</p>
+    <p><b>Test auth</b> checks the chosen credentials, including a token or secret typed but not yet deployed,
+        and whether the names entered exist, without importing or transforming anything. It also tells you which
+        name is wrong when a run fails with the instance's script error. It needs a deployed connection and
+        Servicely 1.11.122 or later.</p>
+
+    <h3>Servicely version</h3>
+    <p>The edit dialog's lookups (<i class="fa fa-refresh"></i>) and <i>Test auth</i> need Servicely 1.11.122 or
+        later. On an earlier version they show a note saying so, and the fields take typed values as usual: running
+        the node doesn't depend on them.</p>
+
+    <h3>Errors</h3>
+    <p>Errors go to a <b>Catch</b> node, with <code>msg.error</code>, <code>msg.statusCode</code> and the error text in
+        <code>msg.payload</code>:</p>
+    <ul>
+        <li><b>Transform failed: …</b>: rows failed to transform, or the transform couldn't run (the instance answered <code>success: false</code>). The text has the load's number; each row's reason is in <code>msg.transform_result.importLoad.Log</code>.</li>
+        <li><b>A 500 with a script error</b>: the instance couldn't find a name. It doesn't say which, so the node
+            suggests the likely names; <i>Test auth</i> tells you which one is wrong.</li>
+        <li><b>401</b>: the credentials were rejected.</li>
+    </ul>
+    <p>The node is marked as misconfigured when a token override is chosen without its token (or secret), or when
+        a property name is invalid.</p>
 </script>

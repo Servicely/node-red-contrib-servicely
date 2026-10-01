@@ -1,7 +1,7 @@
 const assert = require("node:assert");
 const crypto = require("node:crypto");
 const common = require("../servicely-common.js");
-const { createMockServer, json, text } = require("./helpers/mock-server");
+const { createMockServer, closedUrl, json, text } = require("./helpers/mock-server");
 
 describe("servicely-common", function () {
 
@@ -136,7 +136,7 @@ describe("servicely-common", function () {
         });
 
         it("reports connection failures", async function () {
-            const { err } = await send({ url: "http://127.0.0.1:59999/x" });
+            const { err } = await send({ url: await closedUrl() });
             assert.match(err.message, /ECONNREFUSED/);
         });
 

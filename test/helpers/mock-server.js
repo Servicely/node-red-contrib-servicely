@@ -15,6 +15,8 @@ function createMockServer() {
             }
             const request = { method: req.method, url: req.url, headers: req.headers, body: body };
             server.requests.push(request);
+            // Not kept alive: fetch pools connections by host and port, which a later test's server may reuse
+            res.setHeader("Connection", "close");
             server.handler(request, res);
         });
     });
@@ -26,7 +28,12 @@ function createMockServer() {
         server.baseUrl = "http://127.0.0.1:" + server.address().port + "/";
         resolve(server);
     }));
-    server.stop = () => new Promise(resolve => server.close(resolve));
+    // Close kept-alive connections too: clients pool them, and could reach this server again through a
+    // later server given the same port
+    server.stop = () => new Promise(resolve => {
+        server.close(resolve);
+        server.closeAllConnections();
+    });
     server.reset = () => {
         server.requests = [];
         server.handler = (req, res) => json(res, 200, { data: [] });
@@ -45,4 +52,13 @@ function text(res, status, body, contentType) {
     res.end(body);
 }
 
-module.exports = { createMockServer, json, text };
+/** A local URL nothing listens on: a port just released by a server of our own. */
+function closedUrl() {
+    const probe = http.createServer();
+    return new Promise(resolve => probe.listen(0, "127.0.0.1", () => {
+        const port = probe.address().port;
+        probe.close(() => resolve("http://127.0.0.1:" + port + "/x"));
+    }));
+}
+
+module.exports = { createMockServer, closedUrl, json, text };

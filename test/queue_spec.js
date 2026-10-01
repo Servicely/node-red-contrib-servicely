@@ -167,7 +167,7 @@ describe("servicely-queue", function () {
             const r = await loadReply("servicely-success");
             r.receive(Object.assign({}, queueMsg));
             await wait(200);
-            assert.deepStrictEqual(server.requests[0].body, { reply_to: "a1", action: "success", identifier: "node-red", status: "ok", payload: { result: 1 } });
+            assert.deepStrictEqual(server.requests[0].body, { reply_to: "a1", action: "success", identifier: "node-red", status: "ok", payload: "{\"result\":1}" });
             assert.ok(r.error.notCalled);
         });
 
@@ -178,6 +178,7 @@ describe("servicely-queue", function () {
             assert.strictEqual(server.requests[0].body.action, "fail");
             assert.strictEqual(server.requests[0].body.status, "error");
             assert.strictEqual(server.requests[0].body.payload, "exit 1");
+            assert.strictEqual(server.requests[0].body.error, "exit 1");
         });
 
         it("Progress sends msg.progress (or the configured message) and passes the message on", async function () {
@@ -192,12 +193,63 @@ describe("servicely-queue", function () {
             assert.deepStrictEqual(msg.payload, { result: 1 });
         });
 
+        it("Progress passes the message on only once the instance has the update", async function () {
+            let respond;
+            server.handler = (req, res) => { respond = () => json(res, 200, { data: {} }); };
+            const r = await loadReply("servicely-progress");
+            const out = helper.getNode("out");
+            let passed = false;
+            out.on("input", () => { passed = true; });
+            r.receive(Object.assign({}, queueMsg, { progress: "step 1" }));
+            await wait(200);
+            assert.strictEqual(passed, false);
+            respond();
+            await wait(200);
+            assert.strictEqual(passed, true);
+        });
+
+        it("Progress doesn't pass the message on when the update fails", async function () {
+            server.handler = (req, res) => json(res, 400, { _error: "bad" });
+            const r = await loadReply("servicely-progress", { progressMessage: "configured" });
+            const out = helper.getNode("out");
+            let passed = false;
+            out.on("input", () => { passed = true; });
+            r.receive(Object.assign({}, queueMsg));
+            await wait(200);
+            assert.strictEqual(passed, false);
+            assert.strictEqual(server.requests[0].body.payload, "configured");
+            assert.strictEqual(r.error.lastCall.args[0], "Error on reply: bad");
+        });
+
+        it("sends an object or array as JSON text, which Intelligent Actions need", async function () {
+            const r = await loadReply("servicely-success");
+            r.receive(Object.assign({}, queueMsg, { payload: { a: [1, 2] } }));
+            await wait(200);
+            assert.strictEqual(server.requests[0].body.payload, '{"a":[1,2]}');
+            assert.strictEqual(server.requests[0].body.error, undefined);
+        });
+
+        it("replies with the identifier the action was claimed by", async function () {
+            const r = await loadReply("servicely-success");
+            r.receive(Object.assign({}, queueMsg, { _original_payload: { id: "a1", claimed_by: "nr-2" } }));
+            await wait(200);
+            assert.strictEqual(server.requests[0].body.identifier, "nr-2");
+        });
+
+        it("Failure sends its description as error: the caught error, else the payload", async function () {
+            const r = await loadReply("servicely-failure");
+            r.receive(Object.assign({}, queueMsg, { payload: { code: 7 } }));
+            r.receive(Object.assign({}, queueMsg, { payload: "original", error: { message: "boom", source: {} } }));
+            await wait(200);
+            assert.deepStrictEqual(server.requests.map(q => [q.body.payload, q.body.error]), [['{"code":7}', '{"code":7}'], ["original", "boom"]]);
+        });
+
         it("reports HTTP errors from the reply to Catch nodes", async function () {
             server.handler = (req, res) => json(res, 500, { _error: "boom" });
             const r = await loadReply("servicely-success");
             r.receive(Object.assign({}, queueMsg));
             await wait(200);
-            assert.strictEqual(r.error.lastCall.args[0], "Error on reply: boom");
+            assert.strictEqual(r.error.lastCall.args[0], "Error on reply (is msg._reply_to an action on this queue?): boom");
             assert.strictEqual(r.error.lastCall.args[1]._reply_to, "a1");
             assert.strictEqual(r.error.lastCall.args[1].statusCode, 500);
         });

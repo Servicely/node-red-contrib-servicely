@@ -1,0 +1,499 @@
+<script src="resources/node-red-contrib-servicely/servicely-editor.js"></script>
+<script type="text/javascript">
+    (function () {
+        const E = window.ServicelyEditor;
+
+        // Token Validation Types as stored on the instance, and the auth mode each needs. Both "none" types
+        // accept a Bearer token in the header (and, when enabled on the instance, in the URL).
+        const VALIDATION_AUTH = {
+            none: "bearer",
+            none_bearer_url: "bearer",
+            hmac_header: "token_hmac_header",
+            hmac_body: "token_hmac_body"
+        };
+        const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        const HMAC_MODES = E.HMAC_MODES;
+        const AUTH_LABELS = E.AUTH_LABELS;
+
+        /** Whether a webhook's details are those of the Key or id entered on the node. */
+        function matchesKey(key, w) {
+            return E.matchesName(key, w, "key");
+        }
+
+        /**
+         * Registers a node that calls a Servicely Inbound Webhook (V2).
+         */
+        RED.nodes.registerType('servicely-webhook', {
+            category: 'servicely-rest',
+            color: '#f3e074',
+            defaults: Object.assign({
+                name: { value: "" },
+                connection: { value: "", type: "servicely-connection", required: false },
+                webhook: { value: "", validate: E.validateTemplate("Webhook") },
+                method: { value: "POST", required: true, validate: (v, opt) => METHODS.indexOf((v || "").toUpperCase()) >= 0 || E.invalid(opt, "Method: unsupported '" + v + "'") },
+                input_property: { value: "payload", validate: E.validateProperty("Input prop.") },
+                output_property: { value: "payload", validate: E.validateProperty("Output prop.") },
+                skip_output: { value: false },
+                outputs: { value: 1 },
+                // The webhook's details as last retrieved from the instance ({retrievedAt, data}), kept as
+                // documentation. They contain no secrets or scripts.
+                webhook_info: { value: null }
+            }, E.authDefaults()),
+            credentials: E.authCredentials(),
+            inputs: 1,
+            outputs: 1,
+            paletteLabel: 'Webhook',
+            icon: "servicely-image-nodered.png",
+            label: function () {
+                return this.name || (this.webhook ? "webhook " + this.webhook : "Webhook");
+            },
+            outputLabels: function (index) {
+                return index === 1 ? "skipped" : "response";
+            },
+            oneditprepare: onEditPrepare,
+            oneditsave: function () {
+                this.outputs = $("#node-input-skip_output").is(":checked") ? 2 : 1;
+                // Details of a different webhook than the one now entered are dropped
+                let key = $("#node-input-webhook").val();
+                this.webhook_info = E.snapshotToSave("#node-input-webhook-detail", w => matchesKey(key, w));
+            }
+        });
+
+        function onEditPrepare() {
+            const node = this;
+            let webhooks = [];
+            let currentDetail = null;
+            const saved = E.snapshot("#node-input-webhook-detail", node.webhook_info, w => matchesKey($("#node-input-webhook").val(), w));
+            const dialog = E.dialog(node, () => showDetail(currentDetail));
+
+            function loadList() {
+                dialog.setMessage("Loading…");
+                dialog.discover("webhooks", "webhooks", function (body) {
+                    webhooks = Array.isArray(body.data) ? body.data : [];
+                    let select = $("#node-input-webhook-select").empty();
+                    select.append($("<option>").val("").text(webhooks.length ? "Choose a webhook…" : "No webhooks found"));
+                    webhooks.forEach(function (w) {
+                        let label = (w.name || w.key) + " (" + (w.key || w.id) + ", " + w.type + (w.active === false ? ", inactive" : "") + ")";
+                        select.append($("<option>").val(w.key || w.id).text(label));
+                    });
+                    $(".node-input-webhook-select-row").show();
+                    dialog.setMessage("");
+
+                    let current = $("#node-input-webhook").val();
+                    if (current && webhooks.some(w => w.key === current || w.id === current)) {
+                        select.val(current);
+                        loadDetail(current);
+                    }
+                });
+            }
+
+            function loadDetail(key) {
+                if (!key || E.hasPlaceholder(key)) {
+                    showDetail(null);
+                    return;
+                }
+                dialog.discover("webhooks/" + encodeURIComponent(key), "webhooks", function (body) {
+                    dialog.setMessage("");
+                    if (body.data) {
+                        saved.keep(body.data);
+                    }
+                    showDetail(body.data || null);
+                });
+            }
+
+            /** Shows the details saved with the node, when they are for the webhook entered. */
+            function showSaved() {
+                showDetail(saved.saved());
+            }
+
+            /**
+             * The auth settings the webhook's token needs: {mode, hashMethod, signedHeaders}, or null when the
+             * webhook accepts any credential or its token can't be resolved.
+             */
+            function tokenNeeds(token) {
+                if (!token || !VALIDATION_AUTH[token.validationType]) {
+                    return null;
+                }
+                return {
+                    mode: VALIDATION_AUTH[token.validationType],
+                    hashMethod: (token.hashMethod || "sha256").toLowerCase(),
+                    signedHeaders: (Array.isArray(token.signedHeaders) && token.signedHeaders.length) ? token.signedHeaders : ["Date"]
+                };
+            }
+
+            /**
+             * Warnings about the selected webhook. `fixable` is set when "Use token settings" would resolve a
+             * mismatch between the node's auth settings and what the token needs.
+             */
+            function warningsFor(w) {
+                let warnings = [];
+                let fixable = false;
+                if (w.active === false) {
+                    warnings.push("This webhook is inactive: calls return 404.");
+                }
+
+                let token = w.apiToken;
+                if (token && !token.validationType && !token.name) {
+                    warnings.push("The webhook's API token no longer exists, so every request is rejected. Fix the webhook in Servicely.");
+                } else if (token) {
+                    let mode = dialog.authMode();
+                    let needs = tokenNeeds(token);
+                    let tokenName = "'" + (token.name || token.id) + "'";
+
+                    if (token.active === false) {
+                        warnings.push("The webhook's token " + tokenName + " is inactive, so every request is rejected.");
+                    }
+                    if (Array.isArray(token.scopes) && token.scopes.length > 0 && token.scopes.map(s => String(s).toLowerCase()).indexOf("webhook") < 0) {
+                        warnings.push("The webhook's token has Allowed Scopes without Webhook, so calls are rejected.");
+                    }
+
+                    if (mode === "connection") {
+                        let connection = dialog.connectionId() ? RED.nodes.node(dialog.connectionId()) : null;
+                        warnings.push("Only the token " + tokenName + " may call this webhook. Use it on the connection, or set it as a token override below.");
+                        if (needs && connection && connection.authtype && connection.authtype !== needs.mode) {
+                            warnings.push("The token needs " + AUTH_LABELS[needs.mode] + " authentication, but the connection uses " + (AUTH_LABELS[connection.authtype] || connection.authtype) + ".");
+                            fixable = true;
+                        }
+                        if (needs && (needs.mode === "token_hmac_body" || needs.hashMethod !== "sha256" || !E.sameHeaders(needs.signedHeaders, ["Date"]))) {
+                            warnings.push("Connections only sign the Date header with SHA-256, and this token needs different signing. Use a token override.");
+                            fixable = true;
+                        }
+                    } else if (needs) {
+                        if (mode !== needs.mode) {
+                            warnings.push("The token needs " + AUTH_LABELS[needs.mode] + " authentication, but " + AUTH_LABELS[mode] + " is selected.");
+                            fixable = true;
+                        } else if (HMAC_MODES.indexOf(mode) >= 0) {
+                            if (($("#node-input-hash_method").val() || "sha256") !== needs.hashMethod) {
+                                warnings.push("The token's hash method is " + needs.hashMethod + ".");
+                                fixable = true;
+                            }
+                            if (mode === "token_hmac_header" && !E.sameHeaders(E.headerList($("#node-input-signed_headers").val()), needs.signedHeaders)) {
+                                warnings.push("The token signs these headers: " + needs.signedHeaders.join(", ") + ".");
+                                fixable = true;
+                            }
+                        }
+                    }
+                }
+
+                let include = w.outputIncludeFields || [];
+                let exclude = w.outputExcludeFields || [];
+                if (w.type === "transform" && include.length > 0 && exclude.indexOf("*") < 0) {
+                    warnings.push("Output Include Fields has no effect unless Output Exclude Fields is [\"*\"]: the response contains all fields.");
+                }
+                return { warnings: warnings, fixable: fixable && tokenNeeds(token) != null };
+            }
+
+            /** Sets the node's auth mode, hash method and signed headers to what the webhook's token needs. */
+            function useTokenSettings(token) {
+                let needs = tokenNeeds(token);
+                $("#node-input-hash_method").val(needs.hashMethod);
+                $("#node-input-signed_headers").val(needs.signedHeaders.join(", "));
+                $("#node-input-authmode").typedInput("value", needs.mode);
+                $("#node-input-authmode").trigger("change");
+            }
+
+            function describeToken(token) {
+                if (!token) {
+                    return "None: any valid credential";
+                }
+                if (!token.validationType && !token.name) {
+                    return "Missing (" + token.id + ")";
+                }
+                let details = [token.validationType];
+                if (HMAC_MODES.indexOf(VALIDATION_AUTH[token.validationType]) >= 0) {
+                    details.push(token.hashMethod || "sha256");
+                }
+                if (token.validationType === "hmac_header" && Array.isArray(token.signedHeaders) && token.signedHeaders.length) {
+                    details.push("signs " + token.signedHeaders.join(", "));
+                }
+                if (token.active === false) {
+                    details.push("inactive");
+                }
+                return (token.name || token.id) + " (" + details.join(", ") + ")";
+            }
+
+            function showDetail(w) {
+                currentDetail = w;
+                let panel = $("#node-input-webhook-detail").empty();
+                if (!w) {
+                    panel.hide();
+                    return;
+                }
+
+                panel.append(saved.source());
+                let result = warningsFor(w);
+                if (result.warnings.length) {
+                    panel.append(E.warningList(result.warnings));
+                }
+                if (result.fixable) {
+                    let fix = E.button("fa-magic", "Use token settings", "Set the auth mode, hash method and signed headers the webhook's token needs. Then enter its token and secret.");
+                    fix.on("click", () => useTokenSettings(w.apiToken));
+                    panel.append($("<div>").addClass("servicely-actions").append(fix));
+                }
+
+                let summary = $("<table>").addClass("servicely-table");
+                summary.append(E.row("Name", w.name), E.row("Key", w.key), E.row("Type", w.type), E.row("Active", w.active === false ? "No" : "Yes"));
+                if (w.description) {
+                    summary.append(E.row("Description", w.description));
+                }
+                summary.append(E.row("API token", describeToken(w.apiToken)));
+                if (w.type === "scripted") {
+                    summary.append(E.row("Script", w.hasScript ? "Yes" : "No"));
+                }
+                if (w.type === "transform") {
+                    summary.append(
+                        E.row("Target table", w.targetTable),
+                        E.row("Action", w.transformAction),
+                        E.row("Output format", w.outputPayloadFormat),
+                        E.row("Include fields", (w.outputIncludeFields || []).join(", ")),
+                        E.row("Exclude fields", (w.outputExcludeFields || []).join(", ")),
+                        E.row("Scripts", [w.hasPreProcessScript ? "pre-process" : null, w.hasPostProcessScript ? "post-process" : null].filter(Boolean).join(", "))
+                    );
+                }
+                panel.append(summary);
+
+                let mappings = E.mappingsSection(w.mappings);
+                if (mappings) {
+                    panel.append(mappings.heading, mappings.table, E.samplePayloadButton(mappings.sourceFields, false));
+                }
+                panel.show();
+            }
+
+            dialog.testAuth("webhook-auth-test", () => ({ webhook: $("#node-input-webhook").val() }), function (data) {
+                let text = E.describeAuthorized(data);
+                if (data.webhook && data.webhook.active === false) {
+                    text += ". The webhook is inactive: calls return 404.";
+                }
+                return { text: text, ok: data.authorized !== false };
+            }, ["webhook"]);
+
+            $("#node-input-webhook-refresh").on("click", loadList);
+            $("#node-input-webhook-select").on("change", function () {
+                let key = $(this).val();
+                if (key) {
+                    $("#node-input-webhook").val(key);
+                    loadDetail(key);
+                }
+            });
+            $("#node-input-webhook").on("change", function () {
+                if (webhooks.length) {
+                    loadDetail($(this).val());
+                } else if (!matchesKey($(this).val(), currentDetail)) {
+                    showSaved();
+                }
+            });
+
+            showSaved();
+        }
+    })();
+</script>
+
+<script type="text/html" data-template-name="servicely-webhook">
+    <div class="form-row">
+        <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
+        <input type="text" id="node-input-connection" placeholder="From msg._connectionNode if not set">
+        <div class="servicely-hint">Blank: <code>msg._connectionNode</code>, set by a Queue or Connector node.</div>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-webhook"><i class="fa fa-bolt"></i> Webhook</label>
+        <input type="text" id="node-input-webhook" placeholder="Key or id, or msg.webhook_key if blank" style="width: calc(70% - 40px)">
+        <button type="button" id="node-input-webhook-refresh" class="red-ui-button" title="Look up webhooks on the instance"><i class="fa fa-refresh"></i></button>
+        <div class="servicely-hint">The webhook's Key or id, which may include <code>${msg.x}</code>. Blank: <code>msg.webhook_key</code>. <i class="fa fa-refresh"></i> lists the instance's webhooks.</div>
+    </div>
+
+    <div class="form-row node-input-webhook-select-row" style="display: none">
+        <label for="node-input-webhook-select">&nbsp;</label>
+        <select id="node-input-webhook-select" style="width: 70%"></select>
+    </div>
+
+    <div class="form-row servicely-message" id="node-input-servicely-message" style="display: none"></div>
+    <div id="node-input-webhook-detail" class="servicely-detail" style="display: none"></div>
+
+    <div class="form-row">
+        <label for="node-input-method"><i class="fa fa-tasks"></i> Method</label>
+        <select id="node-input-method">
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="GET">GET</option>
+            <option value="DELETE">DELETE</option>
+        </select>
+        <div class="servicely-hint">Usually POST. All but GET send a body.</div>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-input_property"><i class="fa fa-sign-in"></i> Input prop.</label>
+        <input type="text" id="node-input-input_property" placeholder="payload">
+        <div class="servicely-hint">The message property sent as the JSON body.</div>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-output_property"><i class="fa fa-sign-out"></i> Output prop.</label>
+        <input type="text" id="node-input-output_property" placeholder="payload">
+        <div class="servicely-hint">Where the response body is written. A summary goes to <code>msg.webhook</code>.</div>
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-authmode"><i class="fa fa-lock"></i> Auth</label>
+        <input type="text" id="node-input-authmode" style="width: calc(70% - 90px)">
+        <button type="button" id="node-input-servicely-test" class="red-ui-button" title="Check that the webhook accepts these credentials, without running it"><i class="fa fa-plug"></i> Test auth</button>
+        <div class="servicely-hint">The connection's, or this node's own token, e.g. when the webhook only accepts its API token.</div>
+    </div>
+
+    <div class="form-row servicely-auth-token-row">
+        <label for="node-input-apiToken"><i class="fa fa-key"></i> Token</label>
+        <input type="password" id="node-input-apiToken" style="width: 70%">
+        <div class="servicely-hint">The System API Token this node signs in with.</div>
+    </div>
+
+    <div class="form-row servicely-auth-secret-row">
+        <label for="node-input-apiSecret"><i class="fa fa-user-secret"></i> Secret</label>
+        <input type="password" id="node-input-apiSecret" style="width: 70%">
+        <div class="servicely-hint">The token's secret, used to sign each request.</div>
+    </div>
+
+    <div class="form-row servicely-auth-hash-row">
+        <label for="node-input-hash_method"><i class="fa fa-hashtag"></i> Hash</label>
+        <select id="node-input-hash_method" style="width: 70%">
+            <option value="sha256">SHA-256</option>
+            <option value="sha1">SHA-1</option>
+            <option value="md5">MD5</option>
+            <option value="sha512">SHA-512</option>
+        </select>
+        <div class="servicely-hint">Must match the token's Hash Method in Servicely.</div>
+    </div>
+
+    <div class="form-row servicely-auth-signed-row">
+        <label for="node-input-signed_headers"><i class="fa fa-list"></i> Signed headers</label>
+        <input type="text" id="node-input-signed_headers" placeholder="Date" style="width: 70%">
+        <div class="servicely-hint">The token's Header Key: the headers it signs, comma-separated. Values other than <code>Date</code> come from <code>msg.headers</code>.</div>
+    </div>
+
+    <div class="form-row servicely-message" id="node-input-servicely-test-result" style="display: none"></div>
+
+    <div class="form-row">
+        <label for="node-input-skip_output">&nbsp;</label>
+        <input type="checkbox" id="node-input-skip_output" style="display: inline-block; width: auto; vertical-align: top;">
+        <label for="node-input-skip_output" style="width: 70%">Send skipped responses to a second output</label>
+        <div class="servicely-hint">Responses where the webhook's pre-process script skipped the request.</div>
+    </div>
+
+    <hr />
+
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="servicely-webhook">
+    <p>Calls a Servicely Inbound Webhook (V2), <code>/_webhook/v2/{key}</code>, and returns its response. A
+        Transform webhook creates or updates a record from the body; a Scripted webhook runs its script.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Connection</dt>
+        <dd>The instance to call. When blank, <code>msg._connectionNode</code> is used.</dd>
+        <dt>Webhook <span class="property-type">string</span></dt>
+        <dd>The webhook's Key (or id). It can include message properties, e.g. <code>${msg.topic}</code>. When
+            blank, <code>msg.webhook_key</code> is used. <i class="fa fa-refresh"></i> lists the instance's webhooks.</dd>
+        <dt>Method</dt>
+        <dd>Usually <code>POST</code>. GET, PUT, PATCH and DELETE are also available, e.g. for Scripted webhooks.
+            All but GET send a body.</dd>
+        <dt>Input prop. <span class="property-type">string</span></dt>
+        <dd>The message property sent as the JSON body. Default <code>payload</code>.</dd>
+        <dt>Output prop. <span class="property-type">string</span></dt>
+        <dd>The message property the response body is written to. Default <code>payload</code>.</dd>
+        <dt>Auth</dt>
+        <dd>The connection's authentication, or this node's own <i>Bearer</i>, <i>HMAC Header</i> or <i>HMAC Body</i>
+            token (see below). <i>Token</i>, <i>Secret</i>, <i>Hash</i> and <i>Signed headers</i> are shown for the
+            chosen type, and <i>Test auth</i> checks them.</dd>
+        <dt>Send skipped responses to a second output</dt>
+        <dd>When ticked, responses where the webhook's pre-process script skipped the request go to a second output
+            instead of the first.</dd>
+    </dl>
+
+    <h3>Inputs</h3>
+    <dl class="message-properties">
+        <dt>payload <span class="property-type">object</span></dt>
+        <dd>The request body for POST, PUT, PATCH and DELETE, read from the <i>Input prop.</i> property.
+            Scripted webhooks receive it as <code>data</code>.</dd>
+        <dt class="optional">webhook_key <span class="property-type">string</span></dt>
+        <dd>The webhook's Key or id, when none is configured on the node.</dd>
+        <dt class="optional">webhook_params <span class="property-type">object</span></dt>
+        <dd>Query-string parameters, which scripted webhooks receive as <code>params</code>. An array value
+            repeats the parameter.</dd>
+        <dt class="optional">headers <span class="property-type">object</span></dt>
+        <dd>Extra request headers, which scripted webhooks receive as <code>headers</code>. <code>Authorization</code>,
+            <code>Date</code>, <code>Content-Type</code> and <code>Content-MD5</code> are always set by the node.</dd>
+        <dt class="optional">_connectionNode <span class="property-type">string</span></dt>
+        <dd>The connection to use when none is configured on the node.</dd>
+    </dl>
+
+    <h3>Outputs</h3>
+    <ol class="node-ports">
+        <li>Response
+            <dl class="message-properties">
+                <dt>payload <span class="property-type">object</span></dt>
+                <dd>The whole response body, written to the <i>Output prop.</i> property.</dd>
+                <dt>webhook <span class="property-type">object</span></dt>
+                <dd>A summary of the response: <code>key</code>, <code>skipped</code> and <code>reason</code>, plus
+                    <code>operation</code> (<code>created</code> / <code>updated</code>), <code>table</code>,
+                    <code>recordId</code> and <code>warnings</code> for Transform webhooks.</dd>
+                <dt>statusCode <span class="property-type">number</span></dt>
+                <dd>The HTTP status of the response.</dd>
+            </dl>
+        </li>
+        <li>Skipped (only when <i>Send skipped responses to a second output</i> is ticked)
+            <dd>Responses where a pre-process script skipped the pipeline: <code>{"skipped": true, "reason": "..."}</code>.</dd>
+        </li>
+    </ol>
+
+    <h3>Details</h3>
+    <p><b>Webhook</b> is the webhook's Key (or id). It can include message properties, such as
+        <code>${msg.topic}</code>. Press <i class="fa fa-refresh"></i> to choose one from the instance and
+        see its type, token, output format and mappings. <i>Copy sample payload</i> copies a JSON skeleton of the
+        fields the mappings read. Lookups use the deployed connection. They need Servicely 1.11.122 or later; on an earlier version the dialog says so, and you type the Key instead.</p>
+    <p>The details retrieved are saved with the node (<code>webhook_info</code>), so they stay visible as
+        documentation when the instance can't be reached: in this dialog, and under <i>Show more</i> in the
+        Info sidebar. They include the time they were retrieved, and are dropped when <i>Webhook</i> is changed to
+        another webhook. They contain no tokens, secrets or scripts, but they are part of the flow and of any
+        export of it. Press <i class="fa fa-refresh"></i> to update them.</p>
+    <p><b>Auth</b> uses the connection's authentication by default. A webhook with an API token only accepts that
+        token. Choose <i>Bearer Token</i> or <i>HMAC Header Token</i> to give this node its own token (and secret for
+        HMAC), so one connection can call several such webhooks. The token must include the Webhook scope when it has
+        Allowed Scopes, and HMAC requests are rejected when the clock is more than 5 minutes out.</p>
+    <p>An override uses the token's settings in Servicely:</p>
+    <ul>
+        <li><b>HMAC Header Token</b> signs the <i>Signed headers</i> (the token's Header Key, usually just
+            <code>Date</code>), joined with <code>:</code>. Headers other than <code>Date</code> are taken from
+            <code>msg.headers</code>.</li>
+        <li><b>HMAC Body Token</b> signs the method, <code>Content-MD5</code> of the body, content type,
+            <code>Date</code> and path with query.</li>
+        <li><b>Hash</b> must match the token's Hash Method.</li>
+    </ul>
+    <p>After choosing a webhook, <i>Use token settings</i> fills these in from its token. The token and secret
+        themselves are never read from the instance.</p>
+    <p><b>Test auth</b> checks that the webhook would accept the chosen credentials, including a token or secret
+        typed but not yet deployed, without running the webhook. It needs a literal Key or id, a deployed connection
+        and Servicely 1.11.122 or later.</p>
+    <p>The node is marked as misconfigured when a Bearer or HMAC token override is chosen without its token (or
+        secret), when <i>Webhook</i> contains a placeholder that isn't a message property, or when a property name is
+        invalid.</p>
+    <p>Transform webhooks return their <code>standard</code>, <code>simple</code> or <code>custom</code> output format.
+        Scripted webhooks return whatever their script returns. Warnings in the response are logged.</p>
+    <p>Errors, including HTTP error responses, can be handled with a <b>Catch</b> node. The message has
+        <code>msg.error</code>, <code>msg.statusCode</code> and the error text in <code>msg.payload</code>:</p>
+    <ul>
+        <li><b>401</b>: the credential was missing, wrong for this webhook, or out of date.</li>
+        <li><b>404</b>: no active webhook has that Key or id.</li>
+        <li><b>500</b>: the script or pipeline failed. The text includes the <code>errorId</code> recorded in the
+            instance's transaction log.</li>
+    </ul>
+
+    <h3>Servicely version</h3>
+    <p>The edit dialog's lookups (<i class="fa fa-refresh"></i>) and <i>Test auth</i> need Servicely 1.11.122 or
+        later. On an earlier version they show a note saying so, and the fields take typed values as usual: running
+        the node doesn't depend on them.</p>
+</script>
