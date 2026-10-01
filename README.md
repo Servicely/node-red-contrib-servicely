@@ -20,6 +20,31 @@ Or from your Node-RED user directory (usually `~/.node-red`):
 npm install node-red-contrib-servicely
 ```
 
+## Upgrading from 0.0.x
+
+Version 0.1.0 needs Node.js 18 and Node-RED 3.0 or later. You don't have to upgrade Servicely: the nodes work as
+before on any version. Only the edit dialogs' lookups and *Test auth* need Servicely 1.11.122 or later. On an
+earlier version, the dialogs show a note saying so, and you type names in as before.
+
+After upgrading, check your flows for these changes:
+
+- **Credentials.** Passwords, tokens and secrets are now stored as Node-RED credentials. Existing connections
+  keep working. Open each connection, click *Update* and deploy to migrate it. After that, flow exports no longer
+  include the secrets, so re-enter them wherever you import the flow.
+- **Import and Transform results.** These now go to `msg.import_result` / `msg.transform_result`, not
+  `msg["undefined"]`. A failed import or transform, including row failures, is now reported to **Catch** nodes,
+  where it used to pass as a success.
+- **Errors reach Catch.** Errors from the Success, Failure and Progress replies used to be ignored. They now reach
+  **Catch** nodes.
+- **Progress.** The Progress node passes the message on only after the instance accepts the update, and not at all
+  when the update fails.
+- **Reply payloads.** Success, Failure and Progress now send an object or array payload as JSON text.
+- **URI templates.** The REST node only substitutes message properties (`${msg.payload.id}`) and now URL-encodes
+  the values. Templates that use expressions, or that insert values you have already encoded, need changing.
+- **REST default method.** A REST node saved with the default method now performs a GET. Before, it did nothing.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
 ## Nodes
 
 | Node | Purpose |
