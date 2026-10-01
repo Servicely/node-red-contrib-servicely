@@ -99,7 +99,7 @@
     <div class="form-row">
         <label for="node-input-pollingInterval"><i class="fa fa-clock-o"></i> Poll every</label>
         <input type="text" id="node-input-pollingInterval" placeholder="5" style="width: 80px"> seconds
-        <div class="servicely-hint">After a full batch, the node polls again straight away.</div>
+        <div class="servicely-hint">After a full batch, the node polls again straight away. Queue nodes with the same connection and interval share one poll.</div>
     </div>
 
     <div class="form-row">
@@ -167,7 +167,8 @@
         <dd>The actions to claim: the queue entries' <code>subject</code>, e.g. <code>ping</code>. Other actions on
             the queue are left for other nodes.</dd>
         <dt>Poll every <span class="property-type">number</span></dt>
-        <dd>Seconds to wait between polls. Default 5.</dd>
+        <dd>Seconds to wait between polls. Default 5. Queue nodes with the same connection and interval poll
+            together (see <i>Combined polling</i>).</dd>
         <dt>Batch size <span class="property-type">number</span></dt>
         <dd>The most actions claimed per poll. Default 10. When a poll returns a full batch, the node polls again
             straight away, so a backlog is worked through quickly.</dd>
@@ -213,8 +214,18 @@
     <p>Each reply is stored as a new response record on the queue, holding the whole reply. For an action created by
         an Intelligent Action, the reply also sets the action's result on its record.</p>
 
+    <h3>Combined polling</h3>
+    <p>Queue nodes that use the same connection and the same <i>Poll every</i> interval, on any flow, poll together:
+        each poll is one call to the instance that claims actions for all their action names, each up to its own
+        batch size. Ten Queue nodes polling every 10 seconds make one call every 10 seconds, not ten. Nodes with the
+        same action name share its actions.</p>
+    <p>An instance that doesn't support combined polls claims nothing for that call, and the nodes then poll one
+        call each, as before. They try a combined poll again every hour, so an upgraded instance is picked up without
+        a redeploy.</p>
+
     <h3>Details</h3>
     <p>The node waits for each poll to finish before scheduling the next, and starts after a short random delay.
+        Stopping or redeploying waits for a poll in flight, so the actions it claims are still sent on.
         A poll that fails (e.g. a 401 from wrong credentials) goes to a <b>Catch</b> node with the error text in
         <code>msg.payload</code> and <code>msg.statusCode</code>, and polling carries on.</p>
 </script>

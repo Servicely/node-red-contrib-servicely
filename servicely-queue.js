@@ -7,6 +7,15 @@ module.exports = function (RED) {
     const DEFAULT_REQUEST_COUNT = 10;
     const DEFAULT_IDENTIFIER = "node-red";
 
+    // A combined dequeue names its subjects in "subjects", and sends this as "subject": an instance that predates
+    // combined dequeues ignores "subjects" and filters on this, so it claims nothing for us
+    const COMBINED_SUBJECT = "__node-red-combined__";
+    // How long a poller that fell back to one dequeue per node waits before trying a combined dequeue again
+    const COMBINED_RETRY_MS = 60 * 60 * 1000;
+
+    // One poller per connection and polling interval, shared by the Queue nodes that use them
+    const pollers = new Map();
+
     function QueueInputNode(config) {
         RED.nodes.createNode(this, config);
 
@@ -33,160 +42,329 @@ module.exports = function (RED) {
             return;
         }
 
+        node.connectionId = config.connection;
+
+        let key = config.connection + "|" + node.repeat;
+        let poller = pollers.get(key);
+        if (!poller) {
+            poller = new Poller(key, config.connection, node.repeat);
+            pollers.set(key, poller);
+        }
+        node.poller = poller;
+        poller.add(node);
+
+        // A message polls the node's group now, unless a poll is already in flight
         node.on('input', function (msg, send, done) {
-            // Only one dequeue at a time; a poll that fires while one is in flight is skipped
-            if (node._inFlight) {
-                done();
-                return;
-            }
-            node._inFlight = true;
-
-            msg.payload = {};
-
-            // Add the Node ID of the connection we used to obtain the tasks, so that the reply nodes
-            // can respond back to the correct location.
-            msg._connectionNode = config.connection;
-
-            // Execute the 'dequeue' API call
-            performDequeueRequest(msg, node, send, function (err, receivedCount) {
-                node._inFlight = false;
-                done(err);
-                node.scheduleNextPoll(receivedCount >= node.requestCount ? 0 : node.repeat * 1000);
-            });
+            poller.poll();
+            done();
         });
 
-        // Polls again after the given delay, once the previous dequeue has completed. A full batch is
-        // followed by an immediate poll so a backlog drains quickly.
-        node.scheduleNextPoll = function (delay) {
-            if (node._closed || !(node.repeat > 0)) {
-                return;
+        // Wait for a dequeue in flight, so the actions it claims are delivered rather than stranded
+        node.on('close', function (removed, done) {
+            poller.remove(node, done);
+            if (RED.settings.verbose) {
+                node.log("Stopped polling");
             }
-            clearTimeout(node.timeout_id);
-            node.timeout_id = setTimeout(function () {
-                node.receive({});
-            }, delay);
-        };
-
-        // Start polling after a random delay, so several Queue nodes don't all poll at the same moment
-        node.scheduleNextPoll(Math.random() * 2000);
+        });
     }
 
     /**
-     * Allows the Queue Input Node to cancel the periodic callback on node update/redeploy.
+     * Polls the queue for every Queue node on one connection with one polling interval. Each round is one
+     * combined dequeue for all their subjects, or, on an instance without combined dequeues, one dequeue per
+     * node. The next round is scheduled once a round completes; a node that received a full batch is polled
+     * again straight away, so a backlog drains quickly.
      */
-    QueueInputNode.prototype.close = function () {
-        this._closed = true;
-        clearTimeout(this.timeout_id);
-        if (RED.settings.verbose) {
-            this.log("Stopped polling");
+    function Poller(key, connectionId, repeat) {
+        this.key = key;
+        this.connectionId = connectionId;
+        this.repeat = repeat;
+        this.members = [];
+        this.mode = "unknown"; // "combined" | "legacy", once the instance has answered
+        this.legacySince = 0;
+        this.retryCombinedAfter = COMBINED_RETRY_MS;
+        this.inFlight = false;
+        this.idleWaiters = [];
+        this.timeoutId = null;
+    }
+
+    Poller.prototype.add = function (node) {
+        let first = this.members.length === 0;
+        this.members.push(node);
+        if (first) {
+            // Start after a random delay, so pollers don't all poll at the same moment
+            this.schedule(Math.random() * 2000);
         }
     };
 
+    Poller.prototype.remove = function (node, done) {
+        this.members = this.members.filter(m => m !== node);
+        if (this.members.length === 0) {
+            clearTimeout(this.timeoutId);
+            if (pollers.get(this.key) === this) {
+                pollers.delete(this.key);
+            }
+        }
+        if (this.inFlight) {
+            this.idleWaiters.push(done);
+        } else {
+            done();
+        }
+    };
+
+    Poller.prototype.schedule = function (delay, members) {
+        if (!(this.repeat > 0) || this.members.length === 0) {
+            return;
+        }
+        clearTimeout(this.timeoutId);
+        this.timeoutId = setTimeout(() => this.poll(members), delay);
+    };
+
     /**
-     * Dequeues a batch of actions, sending one message per action. Calls back with (err, receivedCount).
+     * Runs a round for the given members (default all). Returns false when a round is already in flight.
      */
-    function performDequeueRequest(msg, node, send, callback) {
-        let url = generateQueueUrl(msg._connectionNode);
-        let headers = generateHeaders(msg._connectionNode);
+    Poller.prototype.poll = function (members) {
+        if (this.inFlight) {
+            return false;
+        }
+        members = (members || this.members).filter(m => this.members.includes(m));
+        if (members.length === 0) {
+            return false;
+        }
+        clearTimeout(this.timeoutId);
+        this.inFlight = true;
+
+        members.forEach(m => m.status({fill:"blue",shape:"dot",text:""}));
+
+        let finish = (full) => {
+            this.inFlight = false;
+            let waiters = this.idleWaiters;
+            this.idleWaiters = [];
+            waiters.forEach(done => done());
+            full = full.filter(m => this.members.includes(m));
+            if (full.length > 0) {
+                this.schedule(0, full);
+            } else {
+                this.schedule(this.repeat * 1000);
+            }
+        };
+
+        let tryCombined = this.mode !== "legacy" || Date.now() - this.legacySince >= this.retryCombinedAfter;
+        if (tryCombined) {
+            this.pollCombined(members, finish);
+        } else {
+            this.pollEach(members, finish);
+        }
+        return true;
+    };
+
+    /**
+     * One dequeue for every member's subject. Members that share a subject share its batch, each taking up to
+     * its own batch size.
+     */
+    Poller.prototype.pollCombined = function (members, finish) {
+        let bySubject = new Map();
+        members.forEach(m => {
+            let group = bySubject.get(m.subject);
+            if (group) {
+                group.push(m);
+            } else {
+                bySubject.set(m.subject, [m]);
+            }
+        });
+
+        let subjects = [];
+        bySubject.forEach((group, subject) => subjects.push({
+            subject: subject,
+            request_count: group.reduce((total, m) => total + m.requestCount, 0),
+            identifier: group[0].identifier
+        }));
 
         let message = {
             "action": "dequeue",
-            "identifier": node.identifier,
-            "queue": node.connection.queue,
-            "subject": node.subject,
-            "request_count": node.requestCount
+            "queue": members[0].connection.queue,
+            "subject": COMBINED_SUBJECT,
+            "subjects": subjects
         };
 
-        node.status({fill:"blue",shape:"dot",text:""});
+        dequeue(this.connectionId, message, (error, statusCode, data, body) => {
+            if (error) {
+                members.forEach(m => reportDequeueError(m, error, statusCode));
+                finish([]);
+                return;
+            }
+
+            let marker = body.subjects;
+            if (marker == null || typeof marker !== "object" || Array.isArray(marker)) {
+                // An instance without combined dequeues, which filtered on COMBINED_SUBJECT: poll each node instead
+                if (data.length > 0) {
+                    members[0].warn("Actions with the reserved subject " + COMBINED_SUBJECT + " were claimed and can't be delivered: " + data.map(item => item.id).join(", "));
+                }
+                if (this.mode !== "legacy" && RED.settings.verbose) {
+                    members[0].log("This instance doesn't support combined dequeues, so each Queue node polls on its own");
+                }
+                this.mode = "legacy";
+                this.legacySince = Date.now();
+                this.pollEach(members, finish);
+                return;
+            }
+            this.mode = "combined";
+
+            let received = new Map(members.map(m => [m, []]));
+            let unrouted = [];
+            data.forEach(item => {
+                let group = bySubject.get(item && item.subject) || [];
+                let member = group.find(m => received.get(m).length < m.requestCount) || group[group.length - 1];
+                if (member) {
+                    received.get(member).push(item);
+                } else {
+                    unrouted.push(item);
+                }
+            });
+            if (unrouted.length > 0) {
+                members[0].warn("The instance returned actions for subjects no Queue node asked for: " + unrouted.map(item => item && item.id).join(", "));
+            }
+
+            let full = [];
+            received.forEach((items, m) => {
+                m.status({});
+                deliver(m, items);
+                if (items.length >= m.requestCount) {
+                    full.push(m);
+                }
+            });
+            finish(full);
+        });
+    };
+
+    /**
+     * One dequeue per member, as instances without combined dequeues need.
+     */
+    Poller.prototype.pollEach = function (members, finish) {
+        let pending = members.length;
+        let full = [];
+        members.forEach(m => {
+            let message = {
+                "action": "dequeue",
+                "identifier": m.identifier,
+                "queue": m.connection.queue,
+                "subject": m.subject,
+                "request_count": m.requestCount
+            };
+            dequeue(this.connectionId, message, (error, statusCode, data) => {
+                if (error) {
+                    reportDequeueError(m, error, statusCode);
+                } else {
+                    m.status({});
+                    deliver(m, data);
+                    if (data.length >= m.requestCount) {
+                        full.push(m);
+                    }
+                }
+                if (--pending === 0) {
+                    finish(full);
+                }
+            });
+        });
+    };
+
+    /**
+     * Posts a dequeue. Calls back with (error, statusCode, data, body): the error text, or the claimed actions.
+     */
+    function dequeue(connectionId, message, callback) {
+        let url = generateQueueUrl(connectionId);
+        let headers;
+        try {
+            headers = generateHeaders(connectionId);
+        } catch (e) {
+            callback(e.message);
+            return;
+        }
 
         common.sendRequest({url: url, method: "POST", json: message, headers: headers }, (err, res, body) => {
-            node.status({});
-
             if (err) {
-                callback(reportDequeueError(node, msg, err.message));
-                return;
+                callback(err.message);
+            } else if (res.statusCode == 401) {
+                callback("Authentication failure: " + common.describeHttpError(res.statusCode, body), res.statusCode);
+            } else if (res.statusCode >= 400) {
+                callback(common.describeHttpError(res.statusCode, body), res.statusCode);
+            } else if (body == null || body.data == null || body.data.length == null) {
+                callback("Invalid body data: Status: " + res.statusCode, res.statusCode);
+            } else {
+                callback(null, res.statusCode, body.data, body);
             }
-
-            if (res.statusCode == 401) {
-                callback(reportDequeueError(node, msg, "Authentication failure: " + common.describeHttpError(res.statusCode, body), res.statusCode));
-                return;
-            }
-
-            if (res.statusCode >= 400) {
-                callback(reportDequeueError(node, msg, common.describeHttpError(res.statusCode, body), res.statusCode));
-                return;
-            }
-
-            // Check for invalid state
-            if (body == null || body.data == null || body.data.length == null) {
-                callback(reportDequeueError(node, msg, "Invalid body data: Status: " + res.statusCode, res.statusCode));
-                return;
-            }
-
-            let data = body.data;
-
-            // Because the messages can come in batches, we want to split each request into a single event
-            // in the format that Node-RED uses for Joins etc.
-            msg.parts = {
-                id: RED.util.generateId(),
-                type: "array",
-                count: data.length
-            };
-
-            let originalPayload;
-
-            for (let i = 0; i < data.length; i++) {
-                originalPayload = data[i];
-
-                // Save the original payload, as we only want a single field from the original payload to propagate to the next node
-                msg._original_payload = originalPayload;
-
-                // Set the part index (tracking the position of the original message)
-                msg.parts.index = i;
-
-                // Save the response ID (to reply back to Servicely)
-                msg._reply_to = data[i].id;
-
-                // Replace the payload
-                let payload = originalPayload.payload;
-                delete msg.original_payload_fields;
-
-                if (typeof payload == 'string' && (payload.charAt(0) == "{" || payload.charAt(0) == "[")) {
-                    try {
-                        msg.payload = JSON.parse(payload);
-                    } catch (e) {
-                        // Report against the message (with its _reply_to) so a Catch node can reply with a failure
-                        msg.payload = payload;
-                        node.error("Invalid JSON payload: " + e.message, RED.util.cloneMessage(msg));
-                        continue;
-                    }
-
-                    // Keep the original payload fields so that they can be used in 'Change' nodes to set
-                    // properties for downstream nodes.
-                    msg.original_payload_fields = msg.payload;
-                } else {
-                    msg.payload = payload;
-                }
-
-                // Send the message
-                send(RED.util.cloneMessage(msg));
-            }
-
-            callback(null, data.length);
         });
     }
 
     /**
-     * Records a failed dequeue on the polling message and returns the error text, which the caller
-     * passes to done() so Catch nodes receive it.
+     * Sends one message per claimed action. The messages carry Join-compatible parts, the action id to reply to,
+     * and the connection the reply nodes use.
      */
-    function reportDequeueError(node, msg, error, statusCode) {
-        msg.payload = error;
+    function deliver(node, data) {
+        if (data.length === 0) {
+            return;
+        }
+
+        let msg = {
+            _connectionNode: node.connectionId,
+            // Because the messages can come in batches, we want to split each request into a single event
+            // in the format that Node-RED uses for Joins etc.
+            parts: {
+                id: RED.util.generateId(),
+                type: "array",
+                count: data.length
+            }
+        };
+
+        let originalPayload;
+
+        for (let i = 0; i < data.length; i++) {
+            originalPayload = data[i];
+
+            // Save the original payload, as we only want a single field from the original payload to propagate to the next node
+            msg._original_payload = originalPayload;
+
+            // Set the part index (tracking the position of the original message)
+            msg.parts.index = i;
+
+            // Save the response ID (to reply back to Servicely)
+            msg._reply_to = data[i].id;
+
+            // Replace the payload
+            let payload = originalPayload.payload;
+            delete msg.original_payload_fields;
+
+            if (typeof payload == 'string' && (payload.charAt(0) == "{" || payload.charAt(0) == "[")) {
+                try {
+                    msg.payload = JSON.parse(payload);
+                } catch (e) {
+                    // Report against the message (with its _reply_to) so a Catch node can reply with a failure
+                    msg.payload = payload;
+                    node.error("Invalid JSON payload: " + e.message, RED.util.cloneMessage(msg));
+                    continue;
+                }
+
+                // Keep the original payload fields so that they can be used in 'Change' nodes to set
+                // properties for downstream nodes.
+                msg.original_payload_fields = msg.payload;
+            } else {
+                msg.payload = payload;
+            }
+
+            // Send the message
+            node.send(RED.util.cloneMessage(msg));
+        }
+    }
+
+    /**
+     * Reports a failed dequeue to Catch nodes, with the error text in msg.payload, and shows it on the node.
+     */
+    function reportDequeueError(node, error, statusCode) {
+        let msg = {payload: error, _connectionNode: node.connectionId};
         if (statusCode !== undefined) {
             msg.statusCode = statusCode;
         }
         node.status({fill:"red",shape:"dot",text: error});
-        return error;
+        node.error(error, msg);
     }
 
     function generateQueueUrl(connectionNodeIdentifier) {

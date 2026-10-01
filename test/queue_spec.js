@@ -7,6 +7,7 @@ const { createMockServer, json, text } = require("./helpers/mock-server");
 helper.init(require.resolve("node-red"));
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const COMBINED = "__node-red-combined__";
 
 describe("servicely-queue", function () {
     const server = createMockServer();
@@ -30,13 +31,25 @@ describe("servicely-queue", function () {
             { id: "out", type: "helper" }
         ]);
         const q = helper.getNode("q");
-        clearTimeout(q.timeout_id);
+        clearTimeout(q.poller.timeoutId);
         return { q, out: helper.getNode("out") };
     }
 
+    /** An instance without combined dequeues: it ignores "subjects" and claims nothing for the reserved subject. */
     function dequeueReturns(items) {
-        server.handler = (req, res) => json(res, 200, { data: req.body.action === "dequeue" ? items : {} });
+        server.handler = (req, res) => json(res, 200, { data: req.body.action !== "dequeue" ? {} : req.body.subject === COMBINED ? [] : items });
     }
+
+    /** An instance with combined dequeues, returning the given actions for whatever is asked. */
+    function combinedReturns(items) {
+        server.handler = (req, res) => {
+            const counts = {};
+            (req.body.subjects || []).forEach(s => { counts[s.subject] = items.filter(i => i.subject === s.subject).length; });
+            json(res, 200, { data: items, subjects: counts });
+        };
+    }
+
+    const dequeues = () => server.requests.filter(r => r.body && r.body.action === "dequeue");
 
     function collect(out, count) {
         return new Promise(resolve => {
@@ -51,14 +64,20 @@ describe("servicely-queue", function () {
     }
 
     describe("Queue", function () {
-        it("dequeues with the configured subject, batch size and identifier", async function () {
+        it("tries a combined dequeue, then falls back to its own on an older instance", async function () {
             const { q } = await loadQueue({ requestCount: 5, identifier: "nr-1" });
             q.receive({});
             await wait(200);
             assert.deepStrictEqual(server.requests[0].body, {
+                action: "dequeue", queue: "node-red.default.queue", subject: COMBINED,
+                subjects: [{ subject: "ping", request_count: 5, identifier: "nr-1" }]
+            });
+            assert.deepStrictEqual(server.requests[1].body, {
                 action: "dequeue", identifier: "nr-1", queue: "node-red.default.queue", subject: "ping", request_count: 5
             });
-            assert.strictEqual(server.requests[0].url, "/controller/AsyncIntegration");
+            assert.strictEqual(server.requests[1].url, "/controller/AsyncIntegration");
+            assert.strictEqual(server.requests.length, 2);
+            assert.strictEqual(q.poller.mode, "legacy");
         });
 
         it("sends one message per action with reply details and Join-compatible parts", async function () {
@@ -116,7 +135,13 @@ describe("servicely-queue", function () {
 
         it("never has more than one dequeue in flight", async function () {
             let release;
-            server.handler = (req, res) => { release = () => json(res, 200, { data: [] }); };
+            server.handler = (req, res) => {
+                if (release) {
+                    json(res, 200, { data: [] });
+                } else {
+                    release = () => json(res, 200, { data: [] });
+                }
+            };
             const { q } = await loadQueue();
             q.receive({});
             q.receive({});
@@ -125,22 +150,24 @@ describe("servicely-queue", function () {
             assert.strictEqual(server.requests.length, 1);
             release();
             await wait(100);
-            clearTimeout(q.timeout_id);
+            clearTimeout(q.poller.timeoutId);
         });
 
         it("polls again straight away after a full batch", async function () {
             dequeueReturns([{ id: "a", payload: "1" }, { id: "b", payload: "2" }]);
             const { q } = await loadQueue({ requestCount: 2 });
+            q.poller.mode = "legacy";
+            q.poller.legacySince = Date.now();
             q.receive({});
             await wait(300);
-            clearTimeout(q.timeout_id);
-            q._closed = true;
+            q.poller.repeat = 0;
+            clearTimeout(q.poller.timeoutId);
             assert.ok(server.requests.length >= 2, "expected an immediate follow-up poll, got " + server.requests.length);
         });
 
         it("stops polling when closed", async function () {
             const { q } = await loadQueue({ pollingInterval: 0.05 });
-            q.scheduleNextPoll(0);
+            q.poller.schedule(0);
             await wait(200);
             await helper.unload();
             const count = server.requests.length;
@@ -152,6 +179,175 @@ describe("servicely-queue", function () {
         it("reports a missing connection at startup", async function () {
             await loadFlow([{ id: "q", type: "servicely-queue", connection: "nope", subject: "ping", pollingInterval: 5, wires: [] }]);
             assert.match(helper.getNode("q").error.lastCall.args[0], /connection is not configured/);
+        });
+    });
+
+    describe("Combined polling", function () {
+        /** Queue nodes q1..qn with polling disabled, each wired to its own helper o1..on. */
+        async function loadQueues(specs, extraNodes) {
+            const nodes = [];
+            specs.forEach((spec, i) => {
+                nodes.push(Object.assign({ id: "q" + (i + 1), type: "servicely-queue", connection: "conn", pollingInterval: 3600, wires: [["o" + (i + 1)]] }, spec));
+                nodes.push({ id: "o" + (i + 1), type: "helper" });
+            });
+            await loadFlow(nodes.concat(extraNodes || []));
+            const queues = specs.map((spec, i) => helper.getNode("q" + (i + 1)));
+            queues.forEach(q => clearTimeout(q.poller.timeoutId));
+            return { queues, outs: specs.map((spec, i) => helper.getNode("o" + (i + 1))) };
+        }
+
+        it("claims every subject on a connection and interval with one dequeue", async function () {
+            combinedReturns([]);
+            const { queues } = await loadQueues([
+                { subject: "ping" }, { subject: "orders", requestCount: 5, identifier: "nr-2" }, { subject: "sync", requestCount: 1 }
+            ]);
+            assert.strictEqual(queues[0].poller, queues[2].poller);
+            queues[0].receive({});
+            await wait(200);
+            assert.strictEqual(server.requests.length, 1);
+            assert.deepStrictEqual(server.requests[0].body, {
+                action: "dequeue", queue: "node-red.default.queue", subject: COMBINED,
+                subjects: [
+                    { subject: "ping", request_count: 10, identifier: "node-red" },
+                    { subject: "orders", request_count: 5, identifier: "nr-2" },
+                    { subject: "sync", request_count: 1, identifier: "node-red" }
+                ]
+            });
+            assert.strictEqual(queues[0].poller.mode, "combined");
+        });
+
+        it("sends each node only its own subject's actions, as their own Join group", async function () {
+            combinedReturns([
+                { id: "p1", subject: "ping", payload: "1" },
+                { id: "o1", subject: "orders", payload: '{"n":1}' },
+                { id: "p2", subject: "ping", payload: "2" }
+            ]);
+            const { queues, outs } = await loadQueues([{ subject: "ping" }, { subject: "orders" }]);
+            const pings = collect(outs[0], 2);
+            const orders = collect(outs[1], 1);
+            queues[0].receive({});
+            const [p1, p2] = await pings;
+            const [o1] = await orders;
+
+            assert.deepStrictEqual([p1._reply_to, p2._reply_to], ["p1", "p2"]);
+            assert.deepStrictEqual([p1.parts.index, p2.parts.index, p1.parts.count], [0, 1, 2]);
+            assert.strictEqual(p1.parts.id, p2.parts.id);
+            assert.strictEqual(o1._reply_to, "o1");
+            assert.deepStrictEqual(o1.payload, { n: 1 });
+            assert.strictEqual(o1.parts.count, 1);
+            assert.notStrictEqual(o1.parts.id, p1.parts.id);
+            assert.strictEqual(o1._connectionNode, "conn");
+        });
+
+        it("shares a subject's batch between nodes that listen for it", async function () {
+            combinedReturns([{ id: "a", subject: "ping" }, { id: "b", subject: "ping" }, { id: "c", subject: "ping" }]);
+            const { queues, outs } = await loadQueues([{ subject: "ping", requestCount: 2 }, { subject: "ping", requestCount: 3, identifier: "nr-2" }]);
+            const first = collect(outs[0], 2);
+            const second = collect(outs[1], 1);
+            queues[0].receive({});
+            assert.deepStrictEqual((await first).map(m => m._reply_to), ["a", "b"]);
+            assert.deepStrictEqual((await second).map(m => m._reply_to), ["c"]);
+            assert.deepStrictEqual(server.requests[0].body.subjects, [{ subject: "ping", request_count: 5, identifier: "node-red" }]);
+            queues.forEach(q => { q.poller.repeat = 0; clearTimeout(q.poller.timeoutId); });
+        });
+
+        it("polls separately for a different interval or connection", async function () {
+            combinedReturns([]);
+            const conn2 = { id: "conn2", type: "servicely-connection", baseUrl: server.baseUrl, queue: "other.queue", authtype: "token_hmac_header" };
+            const { queues } = await loadQueues([
+                { subject: "a" }, { subject: "b", pollingInterval: 1800 }, { subject: "c", connection: "conn2" }
+            ], [conn2]);
+            assert.notStrictEqual(queues[0].poller, queues[1].poller);
+            assert.notStrictEqual(queues[0].poller, queues[2].poller);
+            queues.forEach(q => q.receive({}));
+            await wait(200);
+            const subjects = dequeues().map(r => r.body.queue + ":" + r.body.subjects.map(s => s.subject).join()).sort();
+            assert.deepStrictEqual(subjects, ["node-red.default.queue:a", "node-red.default.queue:b", "other.queue:c"]);
+        });
+
+        it("falls back to one dequeue per node in the same round, and stays there", async function () {
+            dequeueReturns([]);
+            const { queues } = await loadQueues([{ subject: "ping" }, { subject: "orders" }]);
+            queues[0].receive({});
+            await wait(200);
+            assert.deepStrictEqual(dequeues().map(r => r.body.subject).sort(), [COMBINED, "orders", "ping"]);
+            server.requests = [];
+            queues[0].receive({});
+            await wait(200);
+            assert.deepStrictEqual(dequeues().map(r => r.body.subject).sort(), ["orders", "ping"]);
+        });
+
+        it("tries a combined dequeue again after the retry period", async function () {
+            dequeueReturns([]);
+            const { queues } = await loadQueues([{ subject: "ping" }]);
+            queues[0].receive({});
+            await wait(200);
+            assert.strictEqual(queues[0].poller.mode, "legacy");
+            queues[0].poller.retryCombinedAfter = 0;
+            combinedReturns([]);
+            server.requests = [];
+            queues[0].receive({});
+            await wait(200);
+            assert.deepStrictEqual(dequeues().map(r => r.body.subject), [COMBINED]);
+            assert.strictEqual(queues[0].poller.mode, "combined");
+        });
+
+        it("polls straight away only the nodes that received a full batch", async function () {
+            let rounds = 0;
+            server.handler = (req, res) => {
+                rounds++;
+                const data = rounds === 1 ? [{ id: "a", subject: "ping" }, { id: "b", subject: "ping" }, { id: "c", subject: "orders" }] : [];
+                json(res, 200, { data: data, subjects: {} });
+            };
+            const { queues } = await loadQueues([{ subject: "ping", requestCount: 2 }, { subject: "orders", requestCount: 5 }]);
+            queues[0].receive({});
+            await wait(300);
+            queues[0].poller.repeat = 0;
+            clearTimeout(queues[0].poller.timeoutId);
+            assert.strictEqual(dequeues().length, 2);
+            assert.deepStrictEqual(dequeues()[1].body.subjects, [{ subject: "ping", request_count: 2, identifier: "node-red" }]);
+        });
+
+        it("reports a failed combined dequeue on every node", async function () {
+            server.handler = (req, res) => json(res, 403, { _error: "Forbidden" });
+            const { queues } = await loadQueues([{ subject: "ping" }, { subject: "orders" }]);
+            queues[0].receive({});
+            await wait(200);
+            assert.strictEqual(server.requests.length, 1);
+            queues.forEach(q => {
+                assert.strictEqual(q.error.lastCall.args[0], "Forbidden");
+                assert.strictEqual(q.error.lastCall.args[1].statusCode, 403);
+            });
+            assert.strictEqual(queues[0].poller.mode, "unknown");
+        });
+
+        it("drops a closed node's subject, and stops when the last node closes", async function () {
+            combinedReturns([]);
+            const { queues } = await loadQueues([{ subject: "ping" }, { subject: "orders" }]);
+            const poller = queues[0].poller;
+            await new Promise(resolve => queues[1].close().then(resolve));
+            queues[0].receive({});
+            await wait(200);
+            assert.deepStrictEqual(server.requests[0].body.subjects.map(s => s.subject), ["ping"]);
+            await new Promise(resolve => queues[0].close().then(resolve));
+            assert.strictEqual(poller.members.length, 0);
+            assert.strictEqual(poller.poll(), false);
+        });
+
+        it("waits for a dequeue in flight before closing", async function () {
+            let release;
+            server.handler = (req, res) => { release = () => json(res, 200, { data: [{ id: "a", subject: "ping" }], subjects: { ping: 1 } }); };
+            const { queues, outs } = await loadQueues([{ subject: "ping" }]);
+            const received = collect(outs[0], 1);
+            queues[0].receive({});
+            await wait(100);
+            let closed = false;
+            const closing = queues[0].close().then(() => { closed = true; });
+            await wait(100);
+            assert.strictEqual(closed, false);
+            release();
+            await closing;
+            assert.strictEqual((await received)[0]._reply_to, "a");
         });
     });
 

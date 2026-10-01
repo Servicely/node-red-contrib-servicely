@@ -5,6 +5,11 @@
 Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node-RED 5 on Node.js 24.
 
 ### Added
+- **Combined Queue polling.** Queue nodes that share a connection and polling interval now poll together: one
+  dequeue per interval claims the actions for all their action names, each up to its own batch size, instead of
+  one call per node. Instances without combined dequeues are detected automatically, and the nodes then poll one
+  call each as before, trying the combined call again every hour. Stopping or redeploying waits for a poll in
+  flight, so the actions it claimed are still sent on.
 - **Webhook** node for Inbound Webhooks (V2). It takes the webhook's Key or id (or `msg.webhook_key`), query
   parameters from `msg.webhook_params`, and extra headers from `msg.headers`. It can use its own Bearer or HMAC
   token for webhooks locked to one API token. It returns the whole response, with a `msg.webhook` summary
