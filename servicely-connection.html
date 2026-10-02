@@ -1,21 +1,29 @@
+<script src="resources/node-red-contrib-servicely/servicely-editor.js"></script>
 <script type="text/javascript">
     RED.nodes.registerType('servicely-connection', {
         category: 'config',
         defaults: {
             baseUrl: {value: "https://[instance-name].servicely.ai/", required: true},
             queue: {value: "node-red.default.queue", required: true},
+            name: {value: null},
+            authtype: { value: "" },
+            // Legacy plain-text credentials from older versions. Migrated into 'credentials' on edit.
             username: { value: null},
             password: { value: null},
-            name: {value: null},
             token: { value: null},
-            secret: { value: null},
-            authtype: { value: "token_hmac_header" }
+            secret: { value: null}
         },
-        credentials: {},
+        credentials: {
+            user: { type: "text" },
+            pass: { type: "password" },
+            apiToken: { type: "password" },
+            apiSecret: { type: "password" }
+        },
         label: function () {
             return this.name || this.baseUrl;
         },
-        oneditprepare: onEditPrepare
+        oneditprepare: onEditPrepare,
+        oneditsave: onEditSave
     });
 
     /**
@@ -33,24 +41,42 @@
         paletteLabel: 'Connector',
         icon: "servicely-image-nodered.png",
         label: function () {
-            return this.name || this.subject || "Connector";
+            return this.name || "Connector";
         }
     });
 
     function onEditPrepare() {
-        let self = this;
+        let credentials = this.credentials || {};
 
-        if (this.authtype == null && this.username != null) {
-            this.authtype = "password";
+        // Move legacy plain-text values into the credential inputs; they are cleared from the flow on save.
+        if (this.username && !credentials.user) {
+            $("#node-config-input-user").val(this.username);
         }
+        if (this.password && !credentials.has_pass) {
+            $("#node-config-input-pass").val(this.password);
+        }
+        if (this.token && !credentials.has_apiToken) {
+            $("#node-config-input-apiToken").val(this.token);
+        }
+        if (this.secret && !credentials.has_apiSecret) {
+            $("#node-config-input-apiSecret").val(this.secret);
+        }
+
+        // Connections saved by older versions have no authentication type
+        let authtype = this.authtype;
+        if (!authtype) {
+            authtype = (this.username || credentials.user) ? "password" : "token_hmac_header";
+        }
+        $("#node-config-input-authtype").val(authtype);
 
         $("#node-config-input-authtype").typedInput({
             types: [
                 {
-                    value: "token_hmac_header",
+                    value: "authtype",
                     options: [
                         {value: "password", label: "Username/Password"},
-                        {value: "token_hmac_header", label: "HMAC Header Token"}
+                        {value: "token_hmac_header", label: "HMAC Header Token"},
+                        {value: "bearer", label: "Bearer Token"}
                     ]
                 }
             ]
@@ -63,6 +89,14 @@
         modifyAuthenticationType($("#node-config-input-authtype").typedInput('value'));
     }
 
+    function onEditSave() {
+        // Legacy plain-text values now live in the encrypted credentials
+        this.username = null;
+        this.password = null;
+        this.token = null;
+        this.secret = null;
+    }
+
     function modifyAuthenticationType(value) {
         let passwordMethod = "hide";
         let tokenMethod = "hide";
@@ -73,6 +107,8 @@
         } else if (value == "token_hmac_header") {
             tokenMethod = "show";
             secretMethod = "show";
+        } else if (value == "bearer") {
+            tokenMethod = "show";
         }
 
         $(".node-config-user-password-group")[passwordMethod]();
@@ -84,64 +120,136 @@
 <script type="text/html" data-template-name="servicely-connection">
 
     <div class="form-row">
-        <label for="node-config-input-name"><i class="icon-tag"></i> Name</label>
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
         <input id="node-config-input-name" placeholder="Name">
+        <div class="servicely-hint">Shown in the other nodes' Connection lists.</div>
     </div>
 
     <hr />
 
     <div class="form-row">
-        <label for="node-config-input-baseUrl"><i class="icon-bookmark"></i> Base URL</label>
+        <label for="node-config-input-baseUrl"><i class="fa fa-globe"></i> Base URL</label>
         <input type="text" id="node-config-input-baseUrl" placeholder="https://instance.servicely.ai/">
+        <div class="servicely-hint">The instance's address. Every request is made relative to it.</div>
     </div>
 
     <div class="form-row">
-        <label for="node-config-input-queue"><i class="icon-tag"></i> Queue</label>
+        <label for="node-config-input-queue"><i class="fa fa-list"></i> Queue</label>
         <input type="text" id="node-config-input-queue" placeholder="Queue">
+        <div class="servicely-hint">The asynchronous queue the Queue node claims actions from. Other nodes don't use it.</div>
     </div>
 
     <div class="form-row">
-        <label for="node-config-input-authtype"><i class="icon-tag"></i> Authentication type</label>
+        <label for="node-config-input-authtype"><i class="fa fa-lock"></i> Authentication</label>
         <input type="text" id="node-config-input-authtype" placeholder="Authentication type">
-
+        <div class="servicely-hint">How every request made with this connection signs in. HMAC tokens must use SHA-256 and sign only <code>Date</code>.</div>
     </div>
 
     <div class="form-row node-config-user-password-group">
-        <label for="node-config-input-username"><i class="icon-tag"></i> Username</label>
-        <input type="text" id="node-config-input-username" placeholder="Username">
+        <label for="node-config-input-user"><i class="fa fa-user"></i> Username</label>
+        <input type="text" id="node-config-input-user" placeholder="Username">
+        <div class="servicely-hint">A Servicely user, for HTTP Basic authentication.</div>
     </div>
 
     <div class="form-row node-config-user-password-group">
-        <label for="node-config-input-password"><i class="icon-tag"></i> Password</label>
-        <input type="password" id="node-config-input-password" placeholder="Password">
+        <label for="node-config-input-pass"><i class="fa fa-key"></i> Password</label>
+        <input type="password" id="node-config-input-pass" placeholder="Password">
     </div>
 
     <div class="form-row node-config-token-group">
-        <label for="node-config-input-token"><i class="icon-tag"></i> Token</label>
-        <input type="text" id="node-config-input-token" placeholder="Token">
+        <label for="node-config-input-apiToken"><i class="fa fa-id-card"></i> Token</label>
+        <input type="password" id="node-config-input-apiToken" placeholder="Token">
+        <div class="servicely-hint">A System API Token.</div>
     </div>
 
     <div class="form-row node-config-secret-group">
-        <label for="node-config-input-secret"><i class="icon-tag"></i> Token secret</label>
-        <input type="password" id="node-config-input-secret" placeholder="Token secret">
+        <label for="node-config-input-apiSecret"><i class="fa fa-key"></i> Token secret</label>
+        <input type="password" id="node-config-input-apiSecret" placeholder="Token secret">
+        <div class="servicely-hint">The token's secret, used to sign each request.</div>
     </div>
 </script>
 
+<script type="text/html" data-help-name="servicely-connection">
+    <p>The address of a Servicely instance and how to sign in to it, shared by the other Servicely nodes.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Name <span class="property-type">string</span></dt>
+        <dd>How the connection is shown in the other nodes' <i>Connection</i> lists.</dd>
+        <dt>Base URL <span class="property-type">string</span></dt>
+        <dd>The instance's address, e.g. <code>https://instance.servicely.ai/</code>. Every request is made
+            relative to it.</dd>
+        <dt>Queue <span class="property-type">string</span></dt>
+        <dd>The asynchronous queue the <b>Queue</b> node claims actions from, e.g.
+            <code>node-red.default.queue</code>. The other nodes don't use it.</dd>
+        <dt>Authentication</dt>
+        <dd>How every request made with this connection is signed:
+            <ul>
+                <li><b>Username/Password</b>: HTTP Basic authentication as a Servicely user.</li>
+                <li><b>HMAC Header Token</b>: a System API Token and its secret. Each request carries
+                    <code>Authorization: HMAC &lt;token&gt;:&lt;signature&gt;</code>, an HMAC-SHA-256 of its
+                    <code>Date</code> header. The token must use SHA-256 and sign only <code>Date</code>;
+                    for other settings, use a node's own token override.</li>
+                <li><b>Bearer Token</b>: a System API Token sent as <code>Authorization: Bearer &lt;token&gt;</code>.</li>
+            </ul>
+        </dd>
+    </dl>
+
+    <h3>Details</h3>
+    <p>Nodes use a connection chosen in their own <i>Connection</i> field. The <b>REST</b>, <b>Webhook</b>,
+        <b>Import</b> and <b>Transform</b> nodes can instead take it from <code>msg._connectionNode</code>, set by
+        a <b>Queue</b> or <b>Connector</b> node earlier in the flow. The <b>Webhook</b>, <b>Import</b> and
+        <b>Transform</b> nodes can also sign their requests with their own token instead of the connection's.</p>
+    <p>Lookups in the edit dialogs (the <i class="fa fa-refresh"></i> buttons) use the <b>deployed</b> connection,
+        on the Node-RED server. Deploy a new or changed connection before using them.</p>
+    <p>Passwords, tokens and secrets are stored as Node-RED credentials, so they are encrypted and are
+        not included when flows are exported. Connections created with older versions of this module stored
+        them in the flow itself; they keep working, and are moved into credentials the next time the
+        connection is opened and saved.</p>
+    <p>If the token has <i>Allowed Scopes</i> or <i>URL Allowed Paths</i> configured on the instance, make sure
+        they cover the endpoints your nodes use: <code>/controller/AsyncIntegration</code> (queue),
+        <code>/controller/ImportManager</code> (import and transform), <code>/_import_admin/v1/*</code> and
+        <code>/_webhook_admin/v2/*</code> (edit dialog lookups), the REST API, and inbound webhooks. HMAC requests
+        are rejected when the Node-RED server's clock is more than 5 minutes out.</p>
+</script>
 
 <script type="text/html" data-template-name="servicely-connection-injector">
     <div class="form-row">
         <label for="node-input-connection"><i class="fa fa-globe"></i> Connection</label>
         <input type="text" id="node-input-connection" placeholder="Servicely connection:">
+        <div class="servicely-hint">Sets <code>msg._connectionNode</code>, which later Servicely nodes use when they have no connection of their own.</div>
     </div>
 
     <hr />
 
     <div class="form-row">
-        <label for="node-input-name"><i class="icon-tag"></i> Name</label>
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
         <input type="text" id="node-input-name" placeholder="Name">
     </div>
 </script>
 
 <script type="text/html" data-help-name="servicely-connection-injector">
-    <p>A simple node that injects a Servicely Connection definition into the flow. Allows other nodes in the flow that require connection information to inherit from a common source. Not required if using a Queue Node as the source.</p>
+    <p>Adds a Servicely connection to the message, so later Servicely nodes in the flow use it.</p>
+
+    <h3>Properties</h3>
+    <dl class="message-properties">
+        <dt>Connection</dt>
+        <dd>The connection to add.</dd>
+    </dl>
+
+    <h3>Inputs</h3>
+    <p>Any message.</p>
+
+    <h3>Outputs</h3>
+    <dl class="message-properties">
+        <dt>_connectionNode <span class="property-type">string</span></dt>
+        <dd>The ID of the selected connection. The rest of the message is unchanged.</dd>
+    </dl>
+
+    <h3>Details</h3>
+    <p>The <b>REST</b>, <b>Webhook</b>, <b>Import</b> and <b>Transform</b> nodes use the connection in
+        <code>msg._connectionNode</code> when they don't have one configured themselves, so one flow can serve
+        several instances. The <b>Success</b>, <b>Failure</b> and <b>Progress</b> nodes always use it.</p>
+    <p>It isn't needed after a <b>Queue</b> node, which sets it already to the connection the action came from.
+        Nodes between them must keep underscore properties such as <code>_connectionNode</code>.</p>
 </script>

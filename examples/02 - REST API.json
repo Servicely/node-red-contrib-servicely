@@ -1,0 +1,98 @@
+[
+  {
+    "id": "ex-r",
+    "type": "tab",
+    "label": "REST API",
+    "info": "Reads records with the REST API. The URI can include message properties, e.g. /v1/Incident/${msg.id}."
+  },
+  {
+    "id": "i1",
+    "type": "inject",
+    "z": "ex-r",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      [
+        "r1"
+      ]
+    ],
+    "name": "List incidents",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payload": "",
+    "payloadType": "date"
+  },
+  {
+    "id": "r1",
+    "type": "servicely-rest",
+    "z": "ex-r",
+    "x": 360,
+    "y": 100,
+    "wires": [
+      [
+        "d1"
+      ]
+    ],
+    "name": "",
+    "connection": "ex-conn",
+    "method": "GET",
+    "uri": "/v1/Incident?limit=5",
+    "input_property": "payload",
+    "output_property": "payload",
+    "output_mode": "auto"
+  },
+  {
+    "id": "d1",
+    "type": "debug",
+    "z": "ex-r",
+    "x": 560,
+    "y": 100,
+    "wires": [],
+    "name": "",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload"
+  },
+  {
+    "id": "c1r",
+    "type": "catch",
+    "z": "ex-r",
+    "x": 140,
+    "y": 180,
+    "wires": [
+      [
+        "d2"
+      ]
+    ],
+    "name": "REST errors",
+    "scope": [
+      "r1"
+    ],
+    "uncaught": false
+  },
+  {
+    "id": "d2",
+    "type": "debug",
+    "z": "ex-r",
+    "x": 360,
+    "y": 180,
+    "wires": [],
+    "name": "Error",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true"
+  },
+  {
+    "id": "ex-conn",
+    "type": "servicely-connection",
+    "name": "My instance",
+    "baseUrl": "https://instance.servicely.ai/",
+    "queue": "node-red.default.queue",
+    "authtype": "token_hmac_header"
+  }
+]

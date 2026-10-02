@@ -1,0 +1,86 @@
+[
+  {
+    "id": "ex-w",
+    "type": "tab",
+    "label": "Inbound webhook",
+    "info": "Posts a payload to an Inbound Webhook (V2) with the Webhook node. Press the refresh button next to Webhook to pick one from the instance and see its mappings. Skipped responses (from a pre-process script) go to the second output; msg.webhook summarises the outcome."
+  },
+  {
+    "id": "i2",
+    "type": "inject",
+    "z": "ex-w",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      [
+        "r2"
+      ]
+    ],
+    "name": "Send",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payload": "{\"external_key\":\"laptop-001\",\"name\":\"LAPTOP-01\"}",
+    "payloadType": "json"
+  },
+  {
+    "id": "r2",
+    "type": "servicely-webhook",
+    "z": "ex-w",
+    "x": 380,
+    "y": 100,
+    "wires": [
+      [
+        "d3"
+      ],
+      [
+        "d4"
+      ]
+    ],
+    "name": "",
+    "connection": "ex-conn",
+    "webhook": "my_webhook",
+    "method": "POST",
+    "input_property": "payload",
+    "output_property": "payload",
+    "authmode": "connection",
+    "skip_output": true,
+    "outputs": 2
+  },
+  {
+    "id": "d3",
+    "type": "debug",
+    "z": "ex-w",
+    "x": 600,
+    "y": 100,
+    "wires": [],
+    "name": "",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true"
+  },
+  {
+    "id": "d4",
+    "type": "debug",
+    "z": "ex-w",
+    "x": 600,
+    "y": 140,
+    "wires": [],
+    "name": "Skipped",
+    "active": true,
+    "tosidebar": true,
+    "complete": "webhook"
+  },
+  {
+    "id": "ex-conn",
+    "type": "servicely-connection",
+    "name": "My instance",
+    "baseUrl": "https://instance.servicely.ai/",
+    "queue": "node-red.default.queue",
+    "authtype": "token_hmac_header"
+  }
+]

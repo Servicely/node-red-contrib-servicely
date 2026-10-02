@@ -1,33 +1,57 @@
 {
   "name": "node-red-contrib-servicely",
-  "version": "0.0.20",
+  "version": "0.1.0",
   "description": "A set of Node-RED nodes to facilitate integration with Servicely.ai.",
   "scripts": {
-    "test": "echo \"Error: no test specified\""
+    "test": "mocha \"test/**/*_spec.js\"",
+    "lint": "eslint ."
   },
   "author": "Chris Jones <chris.jones@servicely.ai>",
-  "license": "Apache 2.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Servicely/node-red-contrib-servicely.git"
+  },
+  "homepage": "https://github.com/Servicely/node-red-contrib-servicely#readme",
   "keywords": [
     "node-red",
     "servicely"
   ],
   "bugs": {
-    "url" : "https://github.com/Servicely/node-red-contrib-servicely/issues"
+    "url": "https://github.com/Servicely/node-red-contrib-servicely/issues"
   },
   "engines": {
-    "node": ">=12.0.0"
+    "node": ">=18.0.0"
   },
   "node-red": {
     "nodes": {
       "servicely-queue": "servicely-queue.js",
       "servicely-connection": "servicely-connection.js",
-      "servicely-rest": "servicely-rest.js"
+      "servicely-rest": "servicely-rest.js",
+      "servicely-webhook": "servicely-webhook.js"
     },
-    "version": ">=2.0.0"
+    "version": ">=3.0.0"
   },
-  "dependencies": {
-    "crypto-js": "^4.1.1",
-    "request": "^2.88.2",
-    "lodash": "^4.17.21"
-  }
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "eslint-plugin-html": "^8.2.1",
+    "globals": "^17.12.0",
+    "mocha": "^12.0.2",
+    "node-red": "^5.0.7",
+    "node-red-node-test-helper": "^0.3.6",
+    "supertest": "^7.3.0"
+  },
+  "files": [
+    "servicely-*.js",
+    "servicely-*.html",
+    "icons/",
+    "resources/",
+    "examples/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "!**/CLAUDE.md",
+    "!docs/"
+  ]
 }

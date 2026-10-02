@@ -6,3 +6,6 @@
 _docker_config_volume/
 
 node_modules/
+
+# macOS Finder metadata
+.DS_Store

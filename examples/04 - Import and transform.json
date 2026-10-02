@@ -1,0 +1,97 @@
+[
+  {
+    "id": "ex-i",
+    "type": "tab",
+    "label": "Import and transform",
+    "info": "Loads rows into an Import Table, then runs the transform."
+  },
+  {
+    "id": "i3",
+    "type": "inject",
+    "z": "ex-i",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      [
+        "cn"
+      ]
+    ],
+    "name": "Rows",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "payload": "[{\"name\":\"Row 1\"},{\"name\":\"Row 2\"}]",
+    "payloadType": "json"
+  },
+  {
+    "id": "cn",
+    "type": "servicely-connection-injector",
+    "z": "ex-i",
+    "x": 330,
+    "y": 100,
+    "wires": [
+      [
+        "im"
+      ]
+    ],
+    "name": "",
+    "connection": "ex-conn"
+  },
+  {
+    "id": "im",
+    "type": "servicely-import",
+    "z": "ex-i",
+    "x": 520,
+    "y": 100,
+    "wires": [
+      [
+        "tr"
+      ]
+    ],
+    "name": "",
+    "import_name": "my_source",
+    "import_table": "my_import_table",
+    "input_property": "payload",
+    "output_property": "import_result"
+  },
+  {
+    "id": "tr",
+    "type": "servicely-transform",
+    "z": "ex-i",
+    "x": 710,
+    "y": 100,
+    "wires": [
+      [
+        "d4"
+      ]
+    ],
+    "name": "",
+    "import_table": "my_import_table",
+    "transform_name": "my_transform",
+    "output_property": "transform_result"
+  },
+  {
+    "id": "d4",
+    "type": "debug",
+    "z": "ex-i",
+    "x": 890,
+    "y": 100,
+    "wires": [],
+    "name": "",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true"
+  },
+  {
+    "id": "ex-conn",
+    "type": "servicely-connection",
+    "name": "My instance",
+    "baseUrl": "https://instance.servicely.ai/",
+    "queue": "node-red.default.queue",
+    "authtype": "token_hmac_header"
+  }
+]
