@@ -35,9 +35,18 @@ describe("servicely-queue", function () {
         return { q, out: helper.getNode("out") };
     }
 
-    /** An instance without combined dequeues: it ignores "subjects" and claims nothing for the reserved subject. */
+    /**
+     * An instance without combined dequeues: it ignores "subjects", needs an identifier, and claims nothing for the
+     * reserved subject.
+     */
     function dequeueReturns(items) {
-        server.handler = (req, res) => json(res, 200, { data: req.body.action !== "dequeue" ? {} : req.body.subject === COMBINED ? [] : items });
+        server.handler = (req, res) => {
+            if (req.body.action === "dequeue" && req.body.identifier == null) {
+                json(res, 400, { _error: "identifier can not be null" });
+                return;
+            }
+            json(res, 200, { data: req.body.action !== "dequeue" ? {} : req.body.subject === COMBINED ? [] : items });
+        };
     }
 
     /** An instance with combined dequeues, returning the given actions for whatever is asked. */
@@ -69,7 +78,7 @@ describe("servicely-queue", function () {
             q.receive({});
             await wait(200);
             assert.deepStrictEqual(server.requests[0].body, {
-                action: "dequeue", queue: "node-red.default.queue", subject: COMBINED,
+                action: "dequeue", queue: "node-red.default.queue", subject: COMBINED, identifier: "nr-1",
                 subjects: [{ subject: "ping", request_count: 5, identifier: "nr-1" }]
             });
             assert.deepStrictEqual(server.requests[1].body, {
@@ -206,7 +215,7 @@ describe("servicely-queue", function () {
             await wait(200);
             assert.strictEqual(server.requests.length, 1);
             assert.deepStrictEqual(server.requests[0].body, {
-                action: "dequeue", queue: "node-red.default.queue", subject: COMBINED,
+                action: "dequeue", queue: "node-red.default.queue", subject: COMBINED, identifier: "node-red",
                 subjects: [
                     { subject: "ping", request_count: 10, identifier: "node-red" },
                     { subject: "orders", request_count: 5, identifier: "nr-2" },
@@ -306,6 +315,34 @@ describe("servicely-queue", function () {
             clearTimeout(queues[0].poller.timeoutId);
             assert.strictEqual(dequeues().length, 2);
             assert.deepStrictEqual(dequeues()[1].body.subjects, [{ subject: "ping", request_count: 2, identifier: "node-red" }]);
+        });
+
+        it("splits a round into requests within the instance's limits", async function () {
+            combinedReturns([]);
+            const specs = [];
+            for (let i = 0; i < 52; i++) {
+                specs.push({ subject: "s" + i, requestCount: 1 });
+            }
+            specs.push({ subject: "big1", requestCount: 600 }, { subject: "big2", requestCount: 600 }, { subject: "huge", requestCount: 1500 });
+            const { queues } = await loadQueues(specs);
+            queues[0].receive({});
+            await wait(300);
+            const requests = dequeues().map(r => r.body.subjects);
+            assert.ok(requests.every(subjects => subjects.length <= 50), "at most 50 subjects per request");
+            assert.ok(requests.every(subjects => subjects.reduce((t, e) => t + e.request_count, 0) <= 1000), "at most 1000 actions per request");
+            assert.strictEqual(requests.flat().length, 55);
+            assert.strictEqual(requests.flat().find(e => e.subject === "huge").request_count, 1000);
+            assert.ok(dequeues().every(r => r.body.identifier === "node-red"));
+        });
+
+        it("falls back for older builds that need an identifier", async function () {
+            dequeueReturns([{ id: "a", subject: "ping" }]);
+            const { queues, outs } = await loadQueues([{ subject: "ping" }]);
+            const received = collect(outs[0], 1);
+            queues[0].receive({});
+            assert.strictEqual((await received)[0]._reply_to, "a");
+            assert.ok(queues[0].error.notCalled);
+            assert.strictEqual(queues[0].poller.mode, "legacy");
         });
 
         it("reports a failed combined dequeue on every node", async function () {

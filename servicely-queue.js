@@ -12,6 +12,9 @@ module.exports = function (RED) {
     const COMBINED_SUBJECT = "__node-red-combined__";
     // How long a poller that fell back to one dequeue per node waits before trying a combined dequeue again
     const COMBINED_RETRY_MS = 60 * 60 * 1000;
+    // The instance's limits for one combined dequeue
+    const COMBINED_MAX_SUBJECTS = 50;
+    const COMBINED_MAX_ACTIONS = 1000;
 
     // One poller per connection and polling interval, shared by the Queue nodes that use them
     const pollers = new Map();
@@ -158,8 +161,8 @@ module.exports = function (RED) {
     };
 
     /**
-     * One dequeue for every member's subject. Members that share a subject share its batch, each taking up to
-     * its own batch size.
+     * One dequeue for every member's subject, split into several when the instance's limits need it. Members
+     * that share a subject share its batch, each taking up to its own batch size.
      */
     Poller.prototype.pollCombined = function (members, finish) {
         let bySubject = new Map();
@@ -172,67 +175,103 @@ module.exports = function (RED) {
             }
         });
 
-        let subjects = [];
-        bySubject.forEach((group, subject) => subjects.push({
-            subject: subject,
-            request_count: group.reduce((total, m) => total + m.requestCount, 0),
-            identifier: group[0].identifier
-        }));
+        // Pack the subjects into requests within the instance's limits
+        let chunks = [];
+        let chunk = null;
+        bySubject.forEach((group, subject) => {
+            let entry = {
+                subject: subject,
+                request_count: Math.min(group.reduce((total, m) => total + m.requestCount, 0), COMBINED_MAX_ACTIONS),
+                identifier: group[0].identifier
+            };
+            if (!chunk || chunk.entries.length >= COMBINED_MAX_SUBJECTS || chunk.total + entry.request_count > COMBINED_MAX_ACTIONS) {
+                chunk = {entries: [], total: 0};
+                chunks.push(chunk);
+            }
+            chunk.entries.push(entry);
+            chunk.total += entry.request_count;
+        });
 
-        let message = {
-            "action": "dequeue",
-            "queue": members[0].connection.queue,
-            "subject": COMBINED_SUBJECT,
-            "subjects": subjects
-        };
-
-        dequeue(this.connectionId, message, (error, statusCode, data, body) => {
-            if (error) {
-                members.forEach(m => reportDequeueError(m, error, statusCode));
-                finish([]);
+        let pending = chunks.length;
+        let full = [];
+        let legacy = [];
+        let chunkDone = () => {
+            if (--pending > 0) {
                 return;
             }
-
-            let marker = body.subjects;
-            if (marker == null || typeof marker !== "object" || Array.isArray(marker)) {
+            if (legacy.length > 0) {
                 // An instance without combined dequeues, which filtered on COMBINED_SUBJECT: poll each node instead
-                if (data.length > 0) {
-                    members[0].warn("Actions with the reserved subject " + COMBINED_SUBJECT + " were claimed and can't be delivered: " + data.map(item => item.id).join(", "));
-                }
                 if (this.mode !== "legacy" && RED.settings.verbose) {
                     members[0].log("This instance doesn't support combined dequeues, so each Queue node polls on its own");
                 }
                 this.mode = "legacy";
                 this.legacySince = Date.now();
-                this.pollEach(members, finish);
+                this.pollEach(legacy, more => finish(full.concat(more)));
                 return;
             }
-            this.mode = "combined";
-
-            let received = new Map(members.map(m => [m, []]));
-            let unrouted = [];
-            data.forEach(item => {
-                let group = bySubject.get(item && item.subject) || [];
-                let member = group.find(m => received.get(m).length < m.requestCount) || group[group.length - 1];
-                if (member) {
-                    received.get(member).push(item);
-                } else {
-                    unrouted.push(item);
-                }
-            });
-            if (unrouted.length > 0) {
-                members[0].warn("The instance returned actions for subjects no Queue node asked for: " + unrouted.map(item => item && item.id).join(", "));
-            }
-
-            let full = [];
-            received.forEach((items, m) => {
-                m.status({});
-                deliver(m, items);
-                if (items.length >= m.requestCount) {
-                    full.push(m);
-                }
-            });
             finish(full);
+        };
+
+        chunks.forEach(chunk => {
+            let chunkMembers = [];
+            chunk.entries.forEach(entry => chunkMembers.push(...bySubject.get(entry.subject)));
+
+            let message = {
+                "action": "dequeue",
+                "queue": members[0].connection.queue,
+                // Older instances need an identifier, and then find no actions with this subject
+                "subject": COMBINED_SUBJECT,
+                "identifier": members[0].identifier,
+                "subjects": chunk.entries
+            };
+
+            dequeue(this.connectionId, message, (error, statusCode, data, body) => {
+                if (error) {
+                    chunkMembers.forEach(m => reportDequeueError(m, error, statusCode));
+                    chunkDone();
+                    return;
+                }
+
+                let marker = body.subjects;
+                if (marker == null || typeof marker !== "object" || Array.isArray(marker)) {
+                    if (data.length > 0) {
+                        members[0].warn("Actions with the reserved subject " + COMBINED_SUBJECT + " were claimed and can't be delivered: " + data.map(item => item && item.id).join(", "));
+                    }
+                    legacy.push(...chunkMembers);
+                    chunkDone();
+                    return;
+                }
+                this.mode = "combined";
+
+                let received = new Map(chunkMembers.map(m => [m, []]));
+                let unrouted = [];
+                data.forEach(item => {
+                    let group = bySubject.get(item && item.subject) || [];
+                    let member = group.find(m => received.get(m).length < m.requestCount) || group[group.length - 1];
+                    if (member && received.has(member)) {
+                        received.get(member).push(item);
+                    } else {
+                        unrouted.push(item);
+                    }
+                });
+                if (unrouted.length > 0) {
+                    members[0].warn("The instance returned actions for subjects no Queue node asked for: " + unrouted.map(item => item && item.id).join(", "));
+                }
+
+                received.forEach((items, m) => {
+                    m.status({});
+                    deliver(m, items);
+                });
+                // A subject that filled its batch is polled again straight away, for all its nodes
+                chunk.entries.forEach(entry => {
+                    let group = bySubject.get(entry.subject);
+                    let count = group.reduce((total, m) => total + received.get(m).length, 0);
+                    if (count >= entry.request_count) {
+                        full.push(...group);
+                    }
+                });
+                chunkDone();
+            });
         });
     };
 
