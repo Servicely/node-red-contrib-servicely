@@ -9,6 +9,7 @@ data imports and transforms, the REST API and Inbound Webhooks.
 - Node.js 18 or later (Node-RED 5 requires 22.9 or later)
 - Servicely 1.11.122 or later for the edit dialogs' lookups (webhooks, import tables, import sources and
   transforms) and *Test auth*. On earlier versions the dialogs say so, and names are typed instead.
+- Servicely 1.11.122 or later for combined Queue polling. On earlier versions each Queue node polls on its own.
 
 ## Install
 
@@ -23,8 +24,9 @@ npm install node-red-contrib-servicely
 ## Upgrading from 0.0.x
 
 Version 0.1.0 needs Node.js 18 and Node-RED 3.0 or later. You don't have to upgrade Servicely: the nodes work as
-before on any version. Only the edit dialogs' lookups and *Test auth* need Servicely 1.11.122 or later. On an
-earlier version, the dialogs show a note saying so, and you type names in as before.
+before on any version. Only the edit dialogs' lookups, *Test auth* and combined Queue polling need Servicely
+1.11.122 or later. On an earlier version, the dialogs show a note saying so, you type names in as before, and each
+Queue node polls on its own.
 
 After upgrading, check your flows for these changes:
 

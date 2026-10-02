@@ -1,15 +1,16 @@
 # Changelog
 
-## 0.1.0 (not yet released)
+## 0.1.0 (2026-10-03)
 
 Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node-RED 5 on Node.js 24.
 
 ### Added
 - **Combined Queue polling.** Queue nodes that share a connection and polling interval now poll together: one
   dequeue per interval claims the actions for all their action names, each up to its own batch size, instead of
-  one call per node. Instances without combined dequeues are detected automatically, and the nodes then poll one
-  call each as before, trying the combined call again every hour. Stopping or redeploying waits for a poll in
-  flight, so the actions it claimed are still sent on.
+  one call per node. A call claims at most 1,000 actions for at most 50 action names, so larger sets are split
+  over several calls. This needs Servicely 1.11.122 or later. Earlier versions are detected automatically, and
+  the nodes then poll one call each as before, trying the combined call again every hour. Stopping or
+  redeploying waits for a poll in flight, so the actions it claimed are still sent on.
 - **Webhook** node for Inbound Webhooks (V2). It takes the webhook's Key or id (or `msg.webhook_key`), query
   parameters from `msg.webhook_params`, and extra headers from `msg.headers`. It can use its own Bearer or HMAC
   token for webhooks locked to one API token. It returns the whole response, with a `msg.webhook` summary
@@ -59,9 +60,11 @@ Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node
   passes it on as `msg.transform_name`, with the table it imported into as `msg.import_table`, so a **Transform**
   node after it can be left with no settings. The Transform node reports an error without calling the instance
   when either name is missing.
-- The edit dialogs show a short prompt under each field.
-- The edit dialogs' lookups and *Test auth* need **Servicely 1.11.122** or later. On an earlier version they show a
-  note saying so instead of an error, and the nodes work as before.
+- The edit dialogs show a short prompt under each field, and nodes with invalid settings are marked as
+  misconfigured. The palette uses current Font Awesome icons, and node labels show what each node does.
+- The Queue node checks at startup that it has a connection, and starts polling after a short random delay.
+- The edit dialogs' lookups, *Test auth* and combined Queue polling need **Servicely 1.11.122** or later. On an
+  earlier version the dialogs show a note saying so instead of an error, and the nodes work as before.
 - Every node's help now describes its properties, inputs and outputs, including what the instance returns, what an
   import source changes, which rows a transform processes, and why every queue action needs a reply.
 - The **Transform** node reports an error without calling the instance when neither the node nor
@@ -81,6 +84,8 @@ Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node
 - A REST node added with the default method now performs a GET instead of doing nothing.
 - The Name field on the Success and Failure nodes is saved, and the Progress node's help is shown.
 - A base URL without a trailing slash is handled.
+- A failed dequeue reports the HTTP status and the instance's error, instead of *Invalid body data*.
+- Connections no longer share cookies: requests used a process-wide cookie jar.
 - The Progress node's unused *Submit activity log* and *Template* fields have been removed.
 - A failed import or transform is reported to **Catch** nodes. The instance answers these with `success: false`
   in a 200 response, which the nodes treated as success. Rows that fail to transform are reported the same way,

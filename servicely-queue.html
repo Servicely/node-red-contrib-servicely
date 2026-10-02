@@ -218,9 +218,10 @@
     <p>Queue nodes that use the same connection and the same <i>Poll every</i> interval, on any flow, poll together:
         each poll is one call to the instance that claims actions for all their action names, each up to its own
         batch size. Ten Queue nodes polling every 10 seconds make one call every 10 seconds, not ten. Nodes with the
-        same action name share its actions.</p>
-    <p>An instance that doesn't support combined polls claims nothing for that call, and the nodes then poll one
-        call each, as before. They try a combined poll again every hour, so an upgraded instance is picked up without
+        same action name share its actions. A call claims at most 1,000 actions for at most 50 action names, so
+        more are split over several calls.</p>
+    <p>Combined polling needs Servicely 1.11.122 or later. An earlier version claims nothing for that call, and the
+        nodes then poll one call each, as before. They try a combined poll again every hour, so an upgraded instance is picked up without
         a redeploy.</p>
 
     <h3>Details</h3>
