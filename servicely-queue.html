@@ -11,7 +11,11 @@
             connection: {value: "", type: "servicely-connection", required: true},
             subject: {value: "", required: true},
             pollingInterval: {value: 5, required: true, validate: function (v) { return RED.validators.number()(v) && Number(v) > 0; }},
-            requestCount: {value: 10, validate: function (v) { return v === "" || (RED.validators.number()(v) && Number(v) >= 1); }},
+            // Blank uses the default batch size, as does a node saved before the setting existed (it has none)
+            requestCount: {value: 10, validate: function (v, opt) {
+                return v == null || v === "" || (RED.validators.number()(v) && Number(v) >= 1) ||
+                    window.ServicelyEditor.invalid(opt, "Batch size: a number of 1 or more");
+            }},
             identifier: {value: "node-red"}
         },
         inputs: 0,

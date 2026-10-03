@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+### Fixed
+- Queue nodes saved by 0.0.20 or earlier are no longer marked as invalid (*Invalid properties: requestCount*). Those
+  versions had no *Batch size* setting, so the nodes have none saved; they use the default of 10, as they already
+  did at runtime.
+
 ## 0.1.1 (2026-10-03)
 
 ### Fixed
