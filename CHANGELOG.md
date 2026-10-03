@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.2
+## 0.1.2 (2026-10-03)
 
 ### Fixed
 - Queue nodes saved by 0.0.20 or earlier are no longer marked as invalid (*Invalid properties: requestCount*). Those
