@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+- **Success**, **Failure** and **Progress** no longer call the instance when the message has no action to reply to
+  (`msg._reply_to` is not set), such as a Queue node's failed poll passed on by a Catch node. They show *no action to
+  reply to* and log a warning at most once a minute, and Progress passes the message on. Before, a Catch → Failure
+  flow sent a failing reply for each failed poll and caught its own error again, repeating each failed poll many
+  times over.
+
+### Added
+- A Queue node's failed poll sets `msg._dequeue_error` to `true`, so a flow can tell it apart from an error while
+  processing an action.
+
 ## 0.1.0 (2026-10-03)
 
 Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node-RED 5 on Node.js 24.

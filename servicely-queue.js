@@ -15,6 +15,8 @@ module.exports = function (RED) {
     // The instance's limits for one combined dequeue
     const COMBINED_MAX_SUBJECTS = 50;
     const COMBINED_MAX_ACTIONS = 1000;
+    // How often a reply node logs that it skipped a message with no action to reply to
+    const NO_ACTION_WARNING_MS = 60 * 1000;
 
     // One poller per connection and polling interval, shared by the Queue nodes that use them
     const pollers = new Map();
@@ -398,7 +400,7 @@ module.exports = function (RED) {
      * Reports a failed dequeue to Catch nodes, with the error text in msg.payload, and shows it on the node.
      */
     function reportDequeueError(node, error, statusCode) {
-        let msg = {payload: error, _connectionNode: node.connectionId};
+        let msg = {payload: error, _connectionNode: node.connectionId, _dequeue_error: true};
         if (statusCode !== undefined) {
             msg.statusCode = statusCode;
         }
@@ -425,6 +427,14 @@ module.exports = function (RED) {
 
         return function (msg, send, done) {
             node.status({});
+
+            // Nothing was claimed, e.g. a Catch node passed on a Queue node's failed poll. Replying would fail, and
+            // reporting that to the same Catch node would loop, so skip it without an error
+            if (msg._reply_to == null || msg._reply_to === "") {
+                skipReply(node, msg, send, done);
+                return;
+            }
+
             if (typeof msg._connectionNode != 'string' || RED.nodes.getNode(msg._connectionNode) == null) {
                 reportReplyError(node, msg, done, "Connection node is missing. Did you use the Servicely Queue node?");
                 return;
@@ -448,6 +458,24 @@ module.exports = function (RED) {
                 performReply(msg, node, done);
             }
         };
+    }
+
+    /**
+     * Skips a message with no action to reply to: shows it on the node, logs it at most once a minute, and passes the
+     * message on from Progress.
+     */
+    function skipReply(node, msg, send, done) {
+        node.status({fill:"yellow",shape:"ring",text: "no action to reply to"});
+        let now = Date.now();
+        if (node._lastNoActionWarning == null || now - node._lastNoActionWarning >= NO_ACTION_WARNING_MS) {
+            node._lastNoActionWarning = now;
+            node.warn("No action to reply to (msg._reply_to is not set): reply not sent. This is expected when a " +
+                "Catch node passes on a Queue node's failed poll.");
+        }
+        if (node._action === "status") {
+            send(msg);
+        }
+        done();
     }
 
     function QueueSuccessResponseNode(config) {

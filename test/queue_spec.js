@@ -1,7 +1,9 @@
 const assert = require("node:assert");
+const path = require("node:path");
 const helper = require("node-red-node-test-helper");
 const connectionNode = require("../servicely-connection.js");
 const queueNodes = require("../servicely-queue.js");
+const catchNode = require(require.resolve("@node-red/nodes/core/common/25-catch.js", { paths: [path.dirname(require.resolve("node-red"))] }));
 const { createMockServer, json, text } = require("./helpers/mock-server");
 
 helper.init(require.resolve("node-red"));
@@ -21,7 +23,7 @@ describe("servicely-queue", function () {
 
     function loadFlow(nodes) {
         const flow = [{ id: "conn", type: "servicely-connection", baseUrl: server.baseUrl, queue: "node-red.default.queue", authtype: "token_hmac_header" }].concat(nodes);
-        return new Promise(resolve => helper.load([connectionNode, queueNodes], flow, { conn: { apiToken: "tok", apiSecret: "sec" } }, resolve));
+        return new Promise(resolve => helper.load([connectionNode, queueNodes, catchNode], flow, { conn: { apiToken: "tok", apiSecret: "sec" } }, resolve));
     }
 
     /** A queue node with polling disabled (interval far in the future); tests trigger polls explicitly. */
@@ -493,6 +495,60 @@ describe("servicely-queue", function () {
             await wait(50);
             assert.match(r.error.lastCall.args[0], /Connection node is missing/);
             assert.strictEqual(server.requests.length, 0);
+        });
+
+        it("doesn't reply to a Queue node's failed poll passed on by a Catch node", async function () {
+            server.handler = (req, res) => json(res, 503, { _error: "Service Unavailable" });
+            await loadFlow([
+                { id: "q1", type: "servicely-queue", connection: "conn", subject: "ping", pollingInterval: 3600, wires: [[]] },
+                { id: "q2", type: "servicely-queue", connection: "conn", subject: "orders", pollingInterval: 3600, wires: [[]] },
+                { id: "c", type: "catch", scope: null, uncaught: false, wires: [["r", "caught"]] },
+                { id: "r", type: "servicely-failure", wires: [] },
+                { id: "caught", type: "helper" }
+            ]);
+            const q1 = helper.getNode("q1");
+            clearTimeout(q1.poller.timeoutId);
+            const r = helper.getNode("r");
+            const caught = [];
+            helper.getNode("caught").on("input", msg => caught.push(msg));
+
+            q1.receive({});
+            await wait(300);
+            assert.deepStrictEqual(server.requests.map(q => q.body.action), ["dequeue"]);
+            assert.deepStrictEqual(caught.map(m => m.error.source.id).sort(), ["q1", "q2"]);
+            caught.forEach(m => {
+                assert.strictEqual(m._dequeue_error, true);
+                assert.strictEqual(m.statusCode, 503);
+            });
+            // The test helper spies on Node.prototype, so the calls are shared by every node
+            const calls = spy => spy.getCalls().filter(c => c.thisValue === r);
+            assert.strictEqual(calls(r.error).length, 0);
+            assert.strictEqual(calls(r.warn).length, 1, "the warning is logged at most once a minute");
+            assert.match(calls(r.warn)[0].args[0], /No action to reply to/);
+        });
+
+        for (const type of ["servicely-success", "servicely-failure"]) {
+            it(type.replace("servicely-", "") + " skips a message without msg._reply_to", async function () {
+                const r = await loadReply(type);
+                for (const replyTo of [undefined, null, ""]) {
+                    r.receive({ _connectionNode: "conn", _reply_to: replyTo, payload: "x" });
+                }
+                await wait(100);
+                assert.strictEqual(server.requests.length, 0);
+                assert.ok(r.error.notCalled);
+                assert.strictEqual(r.warn.callCount, 1);
+            });
+        }
+
+        it("Progress skips a message without msg._reply_to and passes it on", async function () {
+            const r = await loadReply("servicely-progress", { progressMessage: "configured" });
+            const out = helper.getNode("out");
+            const passed = new Promise(resolve => out.on("input", resolve));
+            r.receive({ _connectionNode: "conn", payload: "x" });
+            assert.strictEqual((await passed).payload, "x");
+            await wait(100);
+            assert.strictEqual(server.requests.length, 0);
+            assert.ok(r.error.notCalled);
         });
     });
 });

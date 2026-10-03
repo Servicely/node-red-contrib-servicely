@@ -228,7 +228,10 @@
     <p>The node waits for each poll to finish before scheduling the next, and starts after a short random delay.
         Stopping or redeploying waits for a poll in flight, so the actions it claims are still sent on.
         A poll that fails (e.g. a 401 from wrong credentials) goes to a <b>Catch</b> node with the error text in
-        <code>msg.payload</code> and <code>msg.statusCode</code>, and polling carries on.</p>
+        <code>msg.payload</code> and <code>msg.statusCode</code>, and polling carries on. That message has
+        <code>msg._dequeue_error</code> set to <code>true</code> and no <code>_reply_to</code>, since no action was
+        claimed. A <b>Failure</b> node it reaches skips it, so a <b>Catch</b> node wired to a <b>Failure</b> node is
+        safe on a flow with Queue nodes.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-success">
@@ -253,6 +256,9 @@
     <p>The node has no output. If the reply fails, e.g. because the connection is missing or the instance rejects
         it, the error goes to a <b>Catch</b> node, and the action stays <i>processing</i>. The instance answers an
         unknown <code>msg._reply_to</code> with a 500 script error.</p>
+    <p>A message without <code>msg._reply_to</code> has no action to reply to, such as a <b>Queue</b> node's failed
+        poll passed on by a <b>Catch</b> node. The node doesn't call the instance for it: it shows
+        <i>no action to reply to</i> and logs a warning (at most once a minute).</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-failure">
@@ -279,6 +285,10 @@
     <p>Wire a <b>Catch</b> node to a <b>Failure</b> node, so any error while processing an action is reported back
         instead of leaving the action stranded (see the <b>Queue</b> node). The node has no output. If the reply
         itself fails, the error goes to a <b>Catch</b> node.</p>
+    <p>A message without <code>msg._reply_to</code> has no action to reply to, such as a <b>Queue</b> node's failed
+        poll passed on by a <b>Catch</b> node. The node doesn't call the instance for it: it shows
+        <i>no action to reply to</i> and logs a warning (at most once a minute), without an error, so a
+        <b>Catch</b> node wired to it is safe on a flow with Queue nodes.</p>
 </script>
 
 <script type="text/html" data-help-name="servicely-progress">
@@ -315,4 +325,8 @@
         <b>Failure</b> reopens the action and strands it as <i>pending</i>.</p>
     <p>If the update fails, the error goes to a <b>Catch</b> node and the message isn't passed on, so a <b>Catch</b>
         wired to a <b>Failure</b> node gives the action its only final reply.</p>
+    <p>A message without <code>msg._reply_to</code> has no action to reply to, such as a <b>Queue</b> node's failed
+        poll passed on by a <b>Catch</b> node. The node doesn't call the instance for it: it shows
+        <i>no action to reply to</i>, logs a warning (at most once a minute), and passes the message on straight
+        away.</p>
 </script>
