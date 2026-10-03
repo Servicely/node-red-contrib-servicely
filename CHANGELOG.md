@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1
+## 0.1.1 (2026-10-03)
 
 ### Fixed
 - **Success**, **Failure** and **Progress** no longer call the instance when the message has no action to reply to
