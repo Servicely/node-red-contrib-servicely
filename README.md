@@ -74,7 +74,9 @@ authentication types are supported:
 
 All nodes report errors, including HTTP error responses, to **Catch** nodes. The message carries `msg.error`,
 `msg.statusCode` (for HTTP errors) and the error text in `msg.payload`. For queue actions, a Catch node wired to a
-**Failure** node reports any processing error back to Servicely.
+**Failure** node reports any processing error back to Servicely. A Queue node's failed poll also reaches Catch, with
+`msg._dequeue_error` set and no `msg._reply_to`; the Failure node skips such a message with a warning, since no
+action was claimed.
 
 ## Documentation
 
