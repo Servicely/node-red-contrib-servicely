@@ -550,5 +550,18 @@ describe("servicely-queue", function () {
             assert.strictEqual(server.requests.length, 0);
             assert.ok(r.error.notCalled);
         });
+
+        it("Progress logs a message without msg._reply_to at debug level, not as a warning", async function () {
+            const r = await loadReply("servicely-progress", { progressMessage: "configured" });
+            r.receive({ payload: "x" });
+            r.receive({ payload: "y", progress: "step 2" });
+            await wait(100);
+            const calls = spy => spy.getCalls().filter(c => c.thisValue === r);
+            assert.strictEqual(calls(r.warn).length, 0);
+            const logged = calls(r.debug).map(c => String(c.args[0]));
+            assert.strictEqual(logged.length, 2);
+            assert.match(logged[0], /No action to reply to.*: configured$/);
+            assert.match(logged[1], /: step 2$/);
+        });
     });
 });

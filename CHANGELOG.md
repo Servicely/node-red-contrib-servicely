@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **Progress** no longer logs a warning for a message without an action to reply to (`msg._reply_to` is not set),
+  such as one from a flow shared with an Inject-triggered flow. It still passes the message on without calling the
+  instance, shows *no action (skipped)* in grey, and logs the skipped update, with its progress text, at debug level
+  only. **Success** and **Failure** keep the warning (at most once a minute).
+
 ## 0.1.2 (2026-10-03)
 
 ### Fixed

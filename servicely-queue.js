@@ -424,6 +424,7 @@ module.exports = function (RED) {
     function replyHandler(node, config, action, status) {
         node._action = action;
         node._status = status;
+        node._progressMessage = config.progressMessage;
 
         return function (msg, send, done) {
             node.status({});
@@ -461,19 +462,26 @@ module.exports = function (RED) {
     }
 
     /**
-     * Skips a message with no action to reply to: shows it on the node, logs it at most once a minute, and passes the
-     * message on from Progress.
+     * Skips a message with no action to reply to. Success and Failure show it on the node and log a warning at most
+     * once a minute. Progress passes the message on and logs it at debug level only: it is often shared with flows
+     * that don't start from a Queue node, e.g. ones started by an Inject node.
      */
     function skipReply(node, msg, send, done) {
+        if (node._action === "status") {
+            node.status({fill:"grey",shape:"ring",text: "no action (skipped)"});
+            let progress = (msg.progress != null) ? msg.progress : node._progressMessage;
+            node.debug("No action to reply to (msg._reply_to is not set): progress not sent" +
+                (progress ? ": " + (typeof progress === "object" ? JSON.stringify(progress) : progress) : ""));
+            send(msg);
+            done();
+            return;
+        }
         node.status({fill:"yellow",shape:"ring",text: "no action to reply to"});
         let now = Date.now();
         if (node._lastNoActionWarning == null || now - node._lastNoActionWarning >= NO_ACTION_WARNING_MS) {
             node._lastNoActionWarning = now;
             node.warn("No action to reply to (msg._reply_to is not set): reply not sent. This is expected when a " +
                 "Catch node passes on a Queue node's failed poll.");
-        }
-        if (node._action === "status") {
-            send(msg);
         }
         done();
     }
