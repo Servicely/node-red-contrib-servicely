@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (2026-10-05)
 
 ### Changed
 - **Progress** no longer logs a warning for a message without an action to reply to (`msg._reply_to` is not set),
