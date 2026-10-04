@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 (2026-10-05)
+
+### Changed
+- The edit dialogs' lookups, *Test auth* and combined Queue polling need **Servicely 1.11.125** or later, not
+  1.11.122 as earlier releases said. The help, README and the dialogs' messages now say so. Nothing else changes:
+  the nodes still detect what the instance supports, and work as before on earlier versions.
+
 ## 0.1.3 (2026-10-05)
 
 ### Changed
@@ -36,7 +43,7 @@ Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node
 - **Combined Queue polling.** Queue nodes that share a connection and polling interval now poll together: one
   dequeue per interval claims the actions for all their action names, each up to its own batch size, instead of
   one call per node. A call claims at most 1,000 actions for at most 50 action names, so larger sets are split
-  over several calls. This needs Servicely 1.11.122 or later. Earlier versions are detected automatically, and
+  over several calls. This needs Servicely 1.11.125 or later. Earlier versions are detected automatically, and
   the nodes then poll one call each as before, trying the combined call again every hour. Stopping or
   redeploying waits for a poll in flight, so the actions it claimed are still sent on.
 - **Webhook** node for Inbound Webhooks (V2). It takes the webhook's Key or id (or `msg.webhook_key`), query
@@ -44,7 +51,7 @@ Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node
   token for webhooks locked to one API token. It returns the whole response, with a `msg.webhook` summary
   (operation, table, record id, warnings), an optional second output for skipped responses, and clear 401/404
   errors. In the editor, the refresh button lists the instance's webhooks and shows the selected one's
-  configuration and mappings (this needs Servicely 1.11.122 or later).
+  configuration and mappings (this needs Servicely 1.11.125 or later).
   The details are saved with the node, so they stay visible in the dialog and the Info sidebar as documentation.
   **Test auth** checks that the webhook accepts the node's credentials without running it, and the node is marked
   as misconfigured when a token override is missing its token or secret, or a setting is invalid. Token overrides
@@ -55,7 +62,7 @@ Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node
   table, load options and field mappings). *Copy sample payload* copies a JSON skeleton of an import row. The nodes
   warn about names used more than once, which make runs fail, and about import sources that ignore the posted rows.
   The Transform node warns when its Import table is blank or isn't the transform's default. As on the Webhook node, the details are saved with the node as documentation, and
-  lookups need Servicely 1.11.122 or later.
+  lookups need Servicely 1.11.125 or later.
 - **Import** and **Transform** nodes can use their own Bearer, HMAC Header or HMAC Body token instead of the
   connection's, with **Test auth** to check the credentials and whether the import table and transform entered
   exist, without importing or transforming anything.
@@ -91,7 +98,7 @@ Requires **Node.js 18 or later** and **Node-RED 3.0 or later**. Tested with Node
 - The edit dialogs show a short prompt under each field, and nodes with invalid settings are marked as
   misconfigured. The palette uses current Font Awesome icons, and node labels show what each node does.
 - The Queue node checks at startup that it has a connection, and starts polling after a short random delay.
-- The edit dialogs' lookups, *Test auth* and combined Queue polling need **Servicely 1.11.122** or later. On an
+- The edit dialogs' lookups, *Test auth* and combined Queue polling need **Servicely 1.11.125** or later. On an
   earlier version the dialogs show a note saying so instead of an error, and the nodes work as before.
 - Every node's help now describes its properties, inputs and outputs, including what the instance returns, what an
   import source changes, which rows a transform processes, and why every queue action needs a reply.

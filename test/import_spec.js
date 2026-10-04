@@ -224,7 +224,7 @@ describe("servicely-import / servicely-transform auth and discovery", function (
             await load({});
             const older = (await admin.request().get("/servicely/conn/import-tables").expect(404)).body;
             assert.strictEqual(older.unsupported, true);
-            assert.match(older.error, /^Looking up import tables, sources and transforms needs Servicely 1\.11\.122 or later/);
+            assert.match(older.error, /^Looking up import tables, sources and transforms needs Servicely 1\.11\.125 or later/);
             server.handler = (req, res) => text(res, 200, "<html>app</html>", "text/html");
             assert.strictEqual((await admin.request().get("/servicely/conn/transforms").expect(404)).body.unsupported, true);
             assert.strictEqual(server.requests[0].headers.accept, "application/json");
@@ -309,7 +309,7 @@ describe("servicely-import / servicely-transform auth and discovery", function (
             await load({});
             const res = await test("transform-auth-test", {}).expect(404);
             assert.strictEqual(res.body.unsupported, true);
-            assert.match(res.body.error, /^Test auth needs Servicely 1\.11\.122 or later/);
+            assert.match(res.body.error, /^Test auth needs Servicely 1\.11\.125 or later/);
         });
 
         it("rejects incomplete requests without calling the instance", async function () {

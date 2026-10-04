@@ -224,7 +224,7 @@
         batch size. Ten Queue nodes polling every 10 seconds make one call every 10 seconds, not ten. Nodes with the
         same action name share its actions. A call claims at most 1,000 actions for at most 50 action names, so
         more are split over several calls.</p>
-    <p>Combined polling needs Servicely 1.11.122 or later. An earlier version claims nothing for that call, and the
+    <p>Combined polling needs Servicely 1.11.125 or later. An earlier version claims nothing for that call, and the
         nodes then poll one call each, as before. They try a combined poll again every hour, so an upgraded instance is picked up without
         a redeploy.</p>
 
