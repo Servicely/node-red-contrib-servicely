@@ -454,7 +454,7 @@
     <p><b>Webhook</b> is the webhook's Key (or id). It can include message properties, such as
         <code>${msg.topic}</code>. Press <i class="fa fa-refresh"></i> to choose one from the instance and
         see its type, token, output format and mappings. <i>Copy sample payload</i> copies a JSON skeleton of the
-        fields the mappings read. Lookups use the deployed connection. They need Servicely 1.11.122 or later; on an earlier version the dialog says so, and you type the Key instead.</p>
+        fields the mappings read. Lookups use the deployed connection. They need Servicely 1.11.125 or later; on an earlier version the dialog says so, and you type the Key instead.</p>
     <p>The details retrieved are saved with the node (<code>webhook_info</code>), so they stay visible as
         documentation when the instance can't be reached: in this dialog, and under <i>Show more</i> in the
         Info sidebar. They include the time they were retrieved, and are dropped when <i>Webhook</i> is changed to
@@ -477,7 +477,7 @@
         themselves are never read from the instance.</p>
     <p><b>Test auth</b> checks that the webhook would accept the chosen credentials, including a token or secret
         typed but not yet deployed, without running the webhook. It needs a literal Key or id, a deployed connection
-        and Servicely 1.11.122 or later.</p>
+        and Servicely 1.11.125 or later.</p>
     <p>The node is marked as misconfigured when a Bearer or HMAC token override is chosen without its token (or
         secret), when <i>Webhook</i> contains a placeholder that isn't a message property, or when a property name is
         invalid.</p>
@@ -493,7 +493,7 @@
     </ul>
 
     <h3>Servicely version</h3>
-    <p>The edit dialog's lookups (<i class="fa fa-refresh"></i>) and <i>Test auth</i> need Servicely 1.11.122 or
+    <p>The edit dialog's lookups (<i class="fa fa-refresh"></i>) and <i>Test auth</i> need Servicely 1.11.125 or
         later. On an earlier version they show a note saying so, and the fields take typed values as usual: running
         the node doesn't depend on them.</p>
 </script>

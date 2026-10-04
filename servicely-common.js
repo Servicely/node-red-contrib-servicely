@@ -33,7 +33,7 @@ function isUnsupported(statusCode, body) {
 
 // The first Servicely version with the editor's lookups and Test auth checks (webhooks, import tables and
 // sources, transforms)
-const DISCOVERY_MIN_VERSION = "1.11.122";
+const DISCOVERY_MIN_VERSION = "1.11.125";
 
 const JSON_CONTENT_TYPE = "application/json";
 const HASH_METHODS = ["md5", "sha1", "sha256", "sha512"];

@@ -259,7 +259,7 @@ describe("servicely-webhook", function () {
             await load({});
             const res = await admin.request().get("/servicely/conn/webhooks").expect(404);
             assert.strictEqual(res.body.unsupported, true);
-            assert.match(res.body.error, /^Looking up webhooks needs Servicely 1\.11\.122 or later/);
+            assert.match(res.body.error, /^Looking up webhooks needs Servicely 1\.11\.125 or later/);
         });
 
         it("flags older builds that answer with no static resource", async function () {
@@ -268,7 +268,7 @@ describe("servicely-webhook", function () {
                 server.handler = (req, res) => json(res, status, { message: "No static resource _webhook_admin/v2/inbound." });
                 const res = await admin.request().get("/servicely/conn/webhooks").expect(404);
                 assert.strictEqual(res.body.unsupported, true, "status " + status);
-                assert.match(res.body.error, /needs Servicely 1\.11\.122 or later/);
+                assert.match(res.body.error, /needs Servicely 1\.11\.125 or later/);
             }
         });
 
@@ -348,7 +348,7 @@ describe("servicely-webhook", function () {
                 await load({});
                 const res = await test({}).expect(404);
                 assert.strictEqual(res.body.unsupported, true);
-                assert.match(res.body.error, /^Test auth needs Servicely 1\.11\.122 or later/);
+                assert.match(res.body.error, /^Test auth needs Servicely 1\.11\.125 or later/);
             });
 
             it("rejects incomplete requests without calling the instance", async function () {
