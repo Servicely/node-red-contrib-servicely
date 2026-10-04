@@ -329,8 +329,9 @@
         <b>Failure</b> reopens the action and strands it as <i>pending</i>.</p>
     <p>If the update fails, the error goes to a <b>Catch</b> node and the message isn't passed on, so a <b>Catch</b>
         wired to a <b>Failure</b> node gives the action its only final reply.</p>
-    <p>A message without <code>msg._reply_to</code> has no action to reply to, such as a <b>Queue</b> node's failed
-        poll passed on by a <b>Catch</b> node. The node doesn't call the instance for it: it shows
-        <i>no action to reply to</i>, logs a warning (at most once a minute), and passes the message on straight
-        away.</p>
+    <p>A message without <code>msg._reply_to</code> has no action to reply to, such as one from a flow started by
+        an <b>Inject</b> node rather than a <b>Queue</b> node, or a <b>Queue</b> node's failed poll passed on by a
+        <b>Catch</b> node. The node doesn't call the instance for it: it passes the message on straight away, shows
+        <i>no action (skipped)</i>, and logs the skipped update at debug level only, so a flow shared with
+        non-queue triggers doesn't fill the log with warnings.</p>
 </script>
